@@ -17,6 +17,16 @@ const Ptu = (() => {
         loginPollTimer: null,
     };
 
+    // ── CDN 代理（绕过防盗链） ─────────────────────────────────────────
+    function proxyUrl(url) {
+        if (!url || url.startsWith('/api/proxy/')) return url;
+        const needsProxy = ['douyinpic.com', 'tos-cn-', 'zjcdn.com', 'ies-music', 'music.douyin'];
+        if (needsProxy.some(d => url.includes(d))) {
+            return '/api/proxy/media?url=' + encodeURIComponent(url);
+        }
+        return url;
+    }
+
     // ── API Client ─────────────────────────────────────────────────────
     const api = {
         async get(url) {
@@ -182,7 +192,7 @@ const Ptu = (() => {
             const img = document.getElementById('lb-image');
             const vid = document.getElementById('lb-video');
             const counter = document.getElementById('lb-counter');
-            if (img) { img.style.display = 'block'; img.src = state.previewUrls[idx]; }
+            if (img) { img.style.display = 'block'; img.src = proxyUrl(state.previewUrls[idx]); }
             if (vid) { vid.style.display = 'none'; vid.pause(); vid.src = ''; }
             if (counter) counter.textContent = (idx + 1) + '/' + state.previewUrls.length;
             lb.classList.remove('hidden');
@@ -194,7 +204,7 @@ const Ptu = (() => {
             const vid = document.getElementById('lb-video');
             const counter = document.getElementById('lb-counter');
             if (img) img.style.display = 'none';
-            if (vid) { vid.style.display = 'block'; vid.src = src; vid.play(); }
+            if (vid) { vid.style.display = 'block'; vid.src = proxyUrl(src); vid.play(); }
             if (counter) counter.textContent = '';
             lb.classList.remove('hidden');
         },
@@ -307,8 +317,8 @@ const Ptu = (() => {
             if (meta.media_type === 'video') {
                 gallery.className = 'video-cover';
                 if (allUrls[0]) {
-                    gallery.innerHTML = '<div class="play-overlay">&#9654;</div><img src="'+allUrls[0]+'" alt="cover">';
-                    gallery.onclick = () => lightbox.openVideo(meta.music_url || '');
+                    gallery.innerHTML = '<div class="play-overlay">&#9654;</div><img src="'+proxyUrl(allUrls[0])+'" alt="cover">';
+                    gallery.onclick = () => lightbox.openVideo(proxyUrl(meta.music_url || ''));
                 }
                 if (countEl) countEl.textContent = '';
                 if (renderBtn) renderBtn.classList.add('hidden');
@@ -319,13 +329,13 @@ const Ptu = (() => {
                 for (let i = 0; i < maxShow; i++) {
                     const div = document.createElement('div');
                     div.className = 'gallery-item';
-                    let html = '<img src="'+allUrls[i]+'" loading="lazy">';
+                    let html = '<img src="'+proxyUrl(allUrls[i])+'" loading="lazy">';
                     if (lpData.length > 0 && i < lpData.length && lpData[i].video_url) {
                         html += '<span class="vid-badge">&#9654;</span>';
                     }
                     div.innerHTML = html;
                     div.onclick = (idx => () => {
-                        if (lpData.length > idx && lpData[idx].video_url) lightbox.openVideo(lpData[idx].video_url);
+                        if (lpData.length > idx && lpData[idx].video_url) lightbox.openVideo(proxyUrl(lpData[idx].video_url));
                         else lightbox.open(idx);
                     })(i);
                     gallery.appendChild(div);
@@ -341,7 +351,7 @@ const Ptu = (() => {
                 if (meta.music_url) {
                     document.getElementById('music-title').textContent = '背景音乐: ' + (meta.music_title || '抖音原声');
                     const player = document.getElementById('music-player');
-                    if (player) player.src = meta.music_url;
+                    if (player) player.src = proxyUrl(meta.music_url);
                     document.getElementById('music-status').textContent = '点击播放';
                 } else {
                     document.getElementById('music-title').textContent = '暂无背景音乐';
