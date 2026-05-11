@@ -10,7 +10,7 @@ import yaml
 import httpx
 from pathlib import Path
 from typing import Optional
-from ..models.schemas import ScrapeResult, MediaType
+from ..models.schemas import ScrapeResult, MediaType, LivePhotoSource
 from .ttwid import ensure_ttwid
 
 
@@ -141,6 +141,12 @@ class DouyinScraper:
             result.aweme_id = aweme_id
             return result
 
+        # 路径一(b)：f2 库直调（含签名处理，可选依赖）
+        result = await self._scrape_via_f2(aweme_id)
+        if result and result.image_urls:
+            result.aweme_id = aweme_id
+            return result
+
         # 路径二：Playwright 浏览器内调 API（浏览器自动处理 a_bogus 签名）
         result = await self._scrape_via_pw_api(aweme_id, resolved)
         if result and result.image_urls:
@@ -149,7 +155,7 @@ class DouyinScraper:
 
         # 路径三：Playwright DOM 提取（最终兜底）
         result = await self._scrape_via_playwright(resolved if resolved.startswith("http") else share_url)
-        if result and result.image_urls:
+        if result and (result.image_urls or result.live_photo_data):
             result.aweme_id = aweme_id or ""
             return result
 
@@ -214,6 +220,7 @@ class DouyinScraper:
         if not img_sources:
             return None
         seen_urls = set()
+        live_data = []
         for img in img_sources:
             if not isinstance(img, dict):
                 continue
@@ -224,9 +231,29 @@ class DouyinScraper:
             if img_url in seen_urls:
                 continue
             seen_urls.add(img_url)
-        images = [u for u in seen_urls if u]
-        if not images:
+            video_url = ""
+            video_obj = img.get("video")
+            if isinstance(video_obj, dict):
+                play_addr = video_obj.get("play_addr", {})
+                vlist = play_addr.get("url_list", [])
+                if vlist and vlist[0]:
+                    video_url = vlist[0]
+            elif isinstance(img.get("video_url"), str):
+                video_url = img["video_url"]
+            live_data.append(LivePhotoSource(image_url=img_url, video_url=video_url))
+        if not live_data:
             return None
+        images = [lp.image_url for lp in live_data]
+        has_any_video = any(lp.video_url for lp in live_data)
+        all_have_video = all(lp.video_url for lp in live_data) if live_data else False
+        if has_any_video and not all_have_video:
+            return ScrapeResult(title=title, author=author, media_type=MediaType.COMPREHENSIVE,
+                                image_urls=images, live_photo_data=live_data,
+                                music_url=music_url or None, music_title=music_title)
+        if has_any_video:
+            return ScrapeResult(title=title, author=author, media_type=MediaType.LIVE_PHOTO,
+                                image_urls=images, live_photo_data=live_data,
+                                music_url=music_url or None, music_title=music_title)
         return ScrapeResult(title=title, author=author, media_type=MediaType.IMAGE_SET,
                             image_urls=images, music_url=music_url or None, music_title=music_title)
 
@@ -311,12 +338,25 @@ class DouyinScraper:
 
         return None
 
-    STEALTH_SCRIPT = """
+    ENHANCED_STEALTH = """
+        // ── 基础反检测（WAF JS 挑战） ──
         Object.defineProperty(navigator, 'webdriver', { get: () => false });
         Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
         Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+        // chrome.runtime 对象（部分 WAF 检测 chrome.app 是否存在）
         window.chrome = { runtime: {} };
+        // WebGL 指纹固定（避免 WAF 通过 WebGL 检测 headless）
+        const __gl = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(p) {
+            if (p === 37445) return 'Intel Inc.';
+            if (p === 37446) return 'Intel Iris OpenGL Engine';
+            return __gl.call(this, p);
+        };
+        // 固定 hardwareConcurrency（避免被检测到 navigator 异常）
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
     """
+
+    STEALTH_SCRIPT = ENHANCED_STEALTH
 
     async def _scrape_via_pw_api(self, aweme_id: str, page_url: str) -> Optional[ScrapeResult]:
         """用 Playwright 渲染页面后从 DOM 提取内容。
@@ -335,7 +375,8 @@ class DouyinScraper:
                 viewport={"width": 1920, "height": 1080},
             )
             try:
-                await ctx.add_init_script(DouyinScraper.STEALTH_SCRIPT)
+                # 增强反检测
+                await ctx.add_init_script(DouyinScraper.ENHANCED_STEALTH)
                 pw_cookies = [
                     {"name": k, "value": v, "domain": ".douyin.com", "path": "/"}
                     for k, v in self.cookies.items() if v
@@ -547,7 +588,7 @@ class DouyinScraper:
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 viewport={"width": 1920, "height": 1080},
             )
-            await ctx.add_init_script(DouyinScraper.STEALTH_SCRIPT)
+            await ctx.add_init_script(DouyinScraper.ENHANCED_STEALTH)
             try:
                 import yaml as _yaml
                 ck_path = Path("cookies.yaml")
@@ -747,8 +788,7 @@ class DouyinScraper:
                 img_sources = detail["note_images"]
             if not img_sources:
                 return None
-            images = []
-            seen_urls = set()
+            live_data = []
             for img in img_sources:
                 if not isinstance(img, dict):
                     continue
@@ -756,12 +796,27 @@ class DouyinScraper:
                 if not (ul and ul[0]):
                     continue
                 img_url = ul[0]
-                if img_url in seen_urls:
-                    continue
-                seen_urls.add(img_url)
-            images = [u for u in seen_urls if u]
-            if not images:
+                video_url = ""
+                video_obj = img.get("video")
+                if isinstance(video_obj, dict):
+                    play_addr = video_obj.get("play_addr", {})
+                    vlist = play_addr.get("url_list", [])
+                    if vlist and vlist[0]:
+                        video_url = vlist[0]
+                elif isinstance(img.get("video_url"), str):
+                    video_url = img["video_url"]
+                live_data.append(LivePhotoSource(image_url=img_url, video_url=video_url))
+            if not live_data:
                 return None
+            images = [lp.image_url for lp in live_data]
+            has_any_video = any(lp.video_url for lp in live_data)
+            all_have_video = all(lp.video_url for lp in live_data) if live_data else False
+            if has_any_video and not all_have_video:
+                return ScrapeResult(title=title, author=author, media_type=MediaType.COMPREHENSIVE,
+                                    image_urls=images, live_photo_data=live_data, music_url=music_url or None, music_title=music_title)
+            if has_any_video:
+                return ScrapeResult(title=title, author=author, media_type=MediaType.LIVE_PHOTO,
+                                    image_urls=images, live_photo_data=live_data, music_url=music_url or None, music_title=music_title)
             return ScrapeResult(title=title, author=author, media_type=MediaType.IMAGE_SET,
                                 image_urls=images, music_url=music_url or None, music_title=music_title)
         except Exception:
@@ -915,7 +970,16 @@ class DouyinScraper:
             live = [p for p in pairs if p["image"]]
             if not live:
                 return None
-            return ScrapeResult(title=title, media_type=MediaType.IMAGE_SET, image_urls=[p["image"] for p in live])
+            has_any_video = any(p.get("video") for p in live)
+            all_have_video = all(p.get("video") for p in live) if live else False
+            if has_any_video and not all_have_video:
+                media_type = MediaType.COMPREHENSIVE
+            elif has_any_video:
+                media_type = MediaType.LIVE_PHOTO
+            else:
+                media_type = MediaType.IMAGE_SET
+            return ScrapeResult(title=title, media_type=media_type, image_urls=[p["image"] for p in live],
+                                live_photo_data=[LivePhotoSource(image_url=p["image"], video_url=p.get("video") or "") for p in live])
         except Exception as e:
             print(f"[轮播提取] 失败: {e}")
             return None
@@ -1079,7 +1143,8 @@ class DouyinScraper:
             if is_vid and vs:
                 return ScrapeResult(title=title, media_type=MediaType.VIDEO, image_urls=imgs[:1], music_url=vs)
             if imgs and vs and not is_vid:
-                return ScrapeResult(title=title, media_type=MediaType.IMAGE_SET, image_urls=imgs)
+                return ScrapeResult(title=title, media_type=MediaType.LIVE_PHOTO,
+                                    image_urls=imgs, live_photo_data=[LivePhotoSource(image_url=imgs[0], video_url=vs)])
             if imgs:
                 return ScrapeResult(title=title, media_type=MediaType.IMAGE_SET, image_urls=imgs)
             return None
@@ -1087,3 +1152,71 @@ class DouyinScraper:
             print(f"[DOM提取] 失败: {e}")
             return None
 
+    async def _scrape_via_f2(self, aweme_id: Optional[str]) -> Optional[ScrapeResult]:
+        if not aweme_id:
+            return None
+        try:
+            # 抑制 f2 库的无关日志
+            import logging
+            for lg in ['f2', 'f2.apps.douyin', 'f2.crawlers', 'httpx']:
+                logging.getLogger(lg).setLevel(logging.WARNING)
+            # 禁用 f2 的 Bark 通知（避免 api.day.app 超时重试卡住 60s+）
+            from f2.apps.douyin.handler import DouyinHandler, BarkClientConfManager
+            BarkClientConfManager.client_conf["enable_bark"] = False
+        except ImportError:
+            return None
+        try:
+            cs = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
+            h = DouyinHandler(kwargs={"headers": {"User-Agent": "Mozilla/5.0"}, "cookie": cs})
+            r = await h.fetch_one_video(aweme_id=aweme_id)
+            raw = r if isinstance(r, dict) else r.__dict__
+            # f2 返回结构：{_data: {aweme_detail: {...}}}
+            detail = raw.get("_data", {}).get("aweme_detail", {})
+            if not detail:
+                return None
+
+            title = detail.get("desc", "") or detail.get("title", "") or ""
+            author = ""
+            if isinstance(detail.get("author"), dict):
+                author = detail["author"].get("nickname", "")
+            elif isinstance(detail.get("user"), dict):
+                author = detail["user"].get("nickname", "")
+            if isinstance(detail.get("owner"), dict):
+                author = detail["owner"].get("nickname", "") or author
+
+            imgs = []
+            # 图集图片
+            img_sources = []
+            if detail.get("image_post_info"):
+                img_sources = detail["image_post_info"].get("images", [])
+            elif detail.get("images"):
+                img_sources = detail["images"]
+            elif detail.get("note_images"):
+                img_sources = detail["note_images"]
+
+            seen_urls = set()
+            for img in img_sources:
+                if not isinstance(img, dict):
+                    continue
+                url_list = img.get("url_list", [])
+                if url_list and url_list[0]:
+                    u = url_list[0]
+                    if u.startswith("http") and u not in seen_urls:
+                        seen_urls.add(u)
+                        imgs.append(u)
+
+            if not imgs:
+                # 兜底：直接搜 dict 里的 url
+                for f in ["image_data", "images", "note_images"]:
+                    for x in (detail.get(f, []) or []):
+                        if isinstance(x, dict):
+                            u = x.get("url") or x.get("display_url") or (x.get("url_list") or [None])[0]
+                            if u and u.startswith("http") and u not in seen_urls:
+                                seen_urls.add(u)
+                                imgs.append(u)
+
+            if imgs:
+                return ScrapeResult(title=title, author=author, media_type=MediaType.IMAGE_SET, image_urls=imgs)
+        except Exception as e:
+            print(f"[f2] 失败: {e}")
+        return None

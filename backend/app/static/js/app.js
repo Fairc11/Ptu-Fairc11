@@ -1,5 +1,5 @@
 /**
- * Ptu v1.0.0
+ * Ptu v1.1.0 - Desktop Application Script
  */
 const Ptu = (() => {
     'use strict';
@@ -11,7 +11,7 @@ const Ptu = (() => {
         currentIndex: 0,
         mode: 'standard',
         loggedIn: false,
-        isDesktop: false,
+        isDesktop: !!(window.pywebview && window.pywebview.api),
         // 已登录标志，由 updateLogin 维护
         ws: null,
         loginPollTimer: null,
@@ -48,13 +48,13 @@ const Ptu = (() => {
 
     // ── Desktop Bridge ─────────────────────────────────────────────────
     const desktop = {
-        isAvailable: false,
-        minimize() {},
-        maximize() {},
-        close()   {},
-        startDrag() {},
-        openInExplorer(path) {},
-        notify(title, msg) {},
+        isAvailable: state.isDesktop,
+        minimize() { if (desktop.isAvailable) window.pywebview.api.minimize_window(); },
+        maximize() { if (desktop.isAvailable) window.pywebview.api.maximize_window(); },
+        close()   { if (desktop.isAvailable) window.pywebview.api.close_window(); },
+        startDrag() { if (desktop.isAvailable) window.pywebview.api.start_titlebar_drag(); },
+        openInExplorer(path) { if (desktop.isAvailable) window.pywebview.api.open_in_explorer(path); },
+        notify(title, msg) { if (desktop.isAvailable) window.pywebview.api.show_notification(title, msg); },
     };
 
     // ── WebSocket ──────────────────────────────────────────────────────
@@ -287,9 +287,10 @@ const Ptu = (() => {
             document.getElementById('result-title').textContent = meta.title || '未命名';
             document.getElementById('result-author').textContent = meta.author ? '@' + meta.author : '';
 
-            const typeLabel = {'image_set':'图文笔记','video':'视频'};
+            const lpData = meta.live_photo_data || [];
+            const typeLabel = {'image_set':'图文笔记','video':'视频','live_photo':'实况照片','comprehensive':'综合内容'};
             const typeEl = document.getElementById('media-type');
-            if (typeEl) typeEl.textContent = typeLabel[meta.media_type] || '';
+            if (typeEl) typeEl.textContent = lpData.length > 0 ? lpData.length + ' 张实况照片' : (typeLabel[meta.media_type] || '');
 
             const allUrls = meta.image_urls || [];
             state.previewUrls = allUrls;
@@ -318,11 +319,18 @@ const Ptu = (() => {
                 for (let i = 0; i < maxShow; i++) {
                     const div = document.createElement('div');
                     div.className = 'gallery-item';
-                    div.innerHTML = '<img src="'+allUrls[i]+'" loading="lazy">';
-                    div.onclick = (idx => () => lightbox.open(idx))(i);
+                    let html = '<img src="'+allUrls[i]+'" loading="lazy">';
+                    if (lpData.length > 0 && i < lpData.length && lpData[i].video_url) {
+                        html += '<span class="vid-badge">&#9654;</span>';
+                    }
+                    div.innerHTML = html;
+                    div.onclick = (idx => () => {
+                        if (lpData.length > idx && lpData[idx].video_url) lightbox.openVideo(lpData[idx].video_url);
+                        else lightbox.open(idx);
+                    })(i);
                     gallery.appendChild(div);
                 }
-                if (countEl) countEl.textContent = '共 '+allUrls.length+' 张';
+                if (countEl) countEl.textContent = '共 '+allUrls.length+' 张' + (lpData.length > 0 ? '（含 '+lpData.length+' 段视频）' : '');
                 if (renderBtn) renderBtn.classList.remove('hidden');
                 if (downloadBtn) downloadBtn.textContent = '下载素材';
             }
@@ -342,6 +350,9 @@ const Ptu = (() => {
             } else {
                 musicInfo.classList.add('hidden');
             }
+
+            const liveOpt = document.getElementById('live-photo-option');
+            if (liveOpt) liveOpt.style.display = (meta.media_type === 'live_photo' || lpData.length > 0) ? '' : 'none';
 
             if (videoLink) videoLink.classList.add('hidden');
             if (downloadBtn) downloadBtn.classList.remove('hidden');
@@ -388,6 +399,7 @@ const Ptu = (() => {
                 transition: document.getElementById('transition').value,
                 resolution: document.getElementById('resolution').value,
                 use_original_music: document.getElementById('music-choice').value === 'original',
+                live_photo_mode: document.getElementById('live-photo-mode').value,
                 transition_duration: 0.7,
             };
             progress.show('渲染中...', 50);

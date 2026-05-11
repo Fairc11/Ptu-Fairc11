@@ -39,9 +39,48 @@ class DownloadManager:
             "images": [],
             "music_path": None,
             "video_path": None,
+            "live_photo_videos": [],
         }
 
         client = await self._get_client()
+
+        # LIVE_PHOTO type: download each pair
+        if metadata.live_photo_data:
+            live_dir = target_dir / "live_photos"
+            live_dir.mkdir(exist_ok=True)
+            for i, lp in enumerate(metadata.live_photo_data):
+                await progress_emitter.emit_stage(
+                    task_id, "downloading_live_photos",
+                    i / max(len(metadata.live_photo_data), 1),
+                    f"下载实况 {i+1}/{len(metadata.live_photo_data)}",
+                    i, len(metadata.live_photo_data)
+                )
+                if lp.image_url:
+                    try:
+                        p = await self._download_file(client, lp.image_url, live_dir, f"live_{i:04d}_img")
+                        if p:
+                            result["images"].append(p)
+                    except Exception:
+                        pass
+                if lp.video_url:
+                    try:
+                        p = await self._download_file(client, lp.video_url, live_dir, f"live_{i:04d}_vid")
+                        if p:
+                            result["live_photo_videos"].append(p)
+                    except Exception:
+                        pass
+            # 下载背景音乐
+            if metadata.music_url:
+                await progress_emitter.emit_stage(task_id, "downloading_music", 0.9, "下载背景音乐", 0, 1)
+                try:
+                    p = await self._download_file(client, metadata.music_url, music_dir, "music")
+                    if p:
+                        result["music_path"] = p
+                except Exception as e:
+                    print(f"音乐下载失败: {e}")
+
+            await progress_emitter.emit_stage(task_id, "downloading_live_photos", 1.0, "下载完成")
+            return result
 
         # VIDEO type: download the video
         if metadata.media_type == MediaType.VIDEO and metadata.music_url:

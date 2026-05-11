@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from ..models.task_store import get_store
 from ..models.schemas import TaskStatus, RenderRequest, RenderOptions
 from ..services.media_processor import media_processor
+from ..services.live_photo import live_photo_processor
 from ..config import settings
 
 router = APIRouter(prefix="/api", tags=["media"])
@@ -26,7 +27,7 @@ async def render_video(task_id: str, req: RenderRequest):
         raise HTTPException(400, "图片目录未找到")
 
     # Collect images
-    image_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
     image_paths = sorted(
         [str(p) for p in images_dir.iterdir() if p.suffix.lower() in image_extensions]
     )
@@ -35,6 +36,12 @@ async def render_video(task_id: str, req: RenderRequest):
         raise HTTPException(400, "未找到图片")
 
     options = req.options
+
+    # Convert HEIC images to JPEG
+    for i, path in enumerate(image_paths):
+        if live_photo_processor.is_heic(path):
+            jpeg_path = live_photo_processor.convert_heic_to_jpeg(path, images_dir)
+            image_paths[i] = jpeg_path
 
     # Music path
     music_path = None
@@ -48,6 +55,12 @@ async def render_video(task_id: str, req: RenderRequest):
         if possible:
             music_path = str(possible[0])
 
+    # Live photo videos
+    live_videos = []
+    live_dir = download_path / "live_photos"
+    if live_dir.exists():
+        live_videos = sorted([str(p) for p in live_dir.iterdir()])
+
     try:
         store.update_status(task_id, TaskStatus.PROCESSING)
 
@@ -58,6 +71,7 @@ async def render_video(task_id: str, req: RenderRequest):
             music_path=music_path,
             options=options,
             output_dir=output_dir,
+            live_photo_videos=live_videos,
         )
 
         store.update_status(

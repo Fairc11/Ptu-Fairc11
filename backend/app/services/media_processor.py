@@ -27,6 +27,7 @@ class MediaProcessor:
         music_path: Optional[str],
         options: RenderOptions,
         output_dir: Path,
+        live_photo_videos: Optional[list[str]] = None,
     ) -> str:
         """
         Create a slideshow video from images with background music.
