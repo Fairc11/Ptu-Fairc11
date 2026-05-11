@@ -1,0 +1,6 @@
+# Ptu 配置
+ffmpeg_path: C:\Users\ASUS\AppData\Local\ffmpeg\ffmpeg-8.1.1-essentials_build\bin\ffmpeg.exe
+host: 127.0.0.1
+port: 8000
+debug: true
+max_concurrent_downloads: 3
