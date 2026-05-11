@@ -1215,8 +1215,28 @@ class DouyinScraper:
                                 seen_urls.add(u)
                                 imgs.append(u)
 
+            # 提取音乐信息
+            music_url = ""
+            music_title = ""
+            music_data = detail.get("music", {})
+            if isinstance(music_data, dict):
+                pu = music_data.get("play_url", {})
+                if isinstance(pu, dict):
+                    ul = pu.get("url_list", [])
+                    if ul and ul[0]:
+                        music_url = ul[0]
+                        music_title = music_data.get("title", "") or ""
+
+            # 正文文字（desc 包含标题+正文+#话题）
+            text_content = detail.get("desc", "") or ""
+
             if imgs:
-                return ScrapeResult(title=title, author=author, media_type=MediaType.IMAGE_SET, image_urls=imgs)
+                return ScrapeResult(
+                    title=title, author=author, media_type=MediaType.IMAGE_SET,
+                    image_urls=imgs,
+                    music_url=music_url or None, music_title=music_title,
+                    text_content=text_content,
+                )
         except Exception as e:
             print(f"[f2] 失败: {e}")
         return None

@@ -1,13 +1,23 @@
 from pathlib import Path
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from .config import settings
 from .models.task_store import TaskStore, store as task_store_ref
 from .api import router_scraper, router_download, router_media, router_ws, router_login
 
-app = FastAPI(title="Ptu", version="1.1.0")
+# 共享 httpx 客户端（复用连接池）
+_proxy_client = httpx.AsyncClient(
+    follow_redirects=True, timeout=60.0,
+    headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.douyin.com/",
+    }
+)
+
+app = FastAPI(title="Ptu", version="1.2.0")
 
 
 @app.on_event("startup")
@@ -25,6 +35,7 @@ async def startup():
 async def shutdown():
     from .services.downloader import download_manager
     await download_manager.close()
+    await _proxy_client.aclose()
 
 
 static_dir = Path(__file__).parent / "static"
@@ -36,6 +47,26 @@ app.include_router(router_download.router)
 app.include_router(router_media.router)
 app.include_router(router_ws.router)
 app.include_router(router_login.router)
+
+
+# ── CDN 代理（解决在线预览防盗链问题） ─────────────────────
+ALLOWED_PROXY_DOMAINS = ["douyinpic.com", "tos-cn-", "zjcdn.com", "ies-music", "music.douyin"]
+
+
+@app.get("/api/proxy/media")
+async def proxy_media(url: str):
+    """代理抖音 CDN 资源，加上正确 Referer 头绕过防盗链。"""
+    if not any(d in url for d in ALLOWED_PROXY_DOMAINS):
+        from fastapi import HTTPException
+        raise HTTPException(403, "不允许的域名")
+    try:
+        resp = await _proxy_client.get(url)
+        content_type = resp.headers.get("content-type", "application/octet-stream")
+        return Response(content=resp.content, media_type=content_type)
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(502, f"代理请求失败: {str(e)[:100]}")
+
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 

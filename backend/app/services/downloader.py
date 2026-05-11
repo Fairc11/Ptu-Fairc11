@@ -144,6 +144,15 @@ class DownloadManager:
             if p:
                 result["music_path"] = p
 
+        # 保存正文文字到 post.txt
+        if metadata.text_content:
+            txt_path = target_dir / "post.txt"
+            try:
+                txt_path.write_text(metadata.text_content.strip(), encoding="utf-8")
+                result["text_path"] = str(txt_path)
+            except Exception as e:
+                print(f"文字保存失败: {e}")
+
         return result
 
     async def _download_file(self, client: httpx.AsyncClient, url: str,
