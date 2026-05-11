@@ -20,12 +20,19 @@ class TaskStatus(str, enum.Enum):
 class MediaType(str, enum.Enum):
     IMAGE_SET = "image_set"          # 图集/笔记
     VIDEO = "video"                  # 普通视频
+    LIVE_PHOTO = "live_photo"        # 实况照片
+    COMPREHENSIVE = "comprehensive"  # 混合内容（既有图片又有实况）
 
 
 class TransitionType(str, enum.Enum):
     NONE = "none"
     FADE = "fade"
     KEN_BURNS = "ken_burns"
+
+
+class LivePhotoSource(BaseModel):
+    image_url: str
+    video_url: str
 
 
 class ScrapeResult(BaseModel):
@@ -37,6 +44,7 @@ class ScrapeResult(BaseModel):
     music_url: str | None = None
     music_title: str = ""
     cover_url: str | None = None
+    live_photo_data: list[LivePhotoSource] = []
     aweme_id: str = ""
     raw_data: dict | None = None
 
@@ -57,6 +65,7 @@ class RenderOptions(BaseModel):
     fps: int = 30
     use_original_music: bool = True
     music_file: str | None = None    # 自定义音乐文件路径
+    live_photo_mode: str = "image"   # image | video | both
     transition_duration: float = 0.7
 
 

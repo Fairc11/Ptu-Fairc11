@@ -1,6 +1,6 @@
-; Ptu v1.0.0 - Inno Setup Installer
+; Ptu v1.1.0 - Inno Setup Installer
 #define MyAppName "Ptu"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Ptu"
 #define MyAppExeName "Ptu.exe"
 

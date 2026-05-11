@@ -1,50 +1,98 @@
-# Ptu - 抖音图文/视频 下载工具
+# Ptu - 抖音图文/视频/实况照片 下载工具
 
 > 🚧 **Beta / 测试版** — 功能持续迭代中
 
 ## 简介
 
-Ptu 是一款抖音图文笔记和视频下载工具。支持一键下载素材（图片及背景音乐），并可基于 FFmpeg 合成为幻灯片视频。
+Ptu 是一款 Windows 桌面工具，用于抓取抖音图文笔记、实况照片和视频内容。支持一键下载素材（图片及背景音乐），并可基于 FFmpeg 合成为幻灯片视频（此功能暂未上线）。
 
 ## 功能特性
 
 - **图文笔记下载** — 抓取抖音图文笔记的全部图片与背景音乐
 - **视频下载** — 下载抖音视频文件及封面
-- **幻灯片视频合成** — 支持淡入淡出 / Ken Burns 转场，可选原声或自定义配乐
+- **实况照片支持** — 识别图片关联的短视频片段，分别保存图片与视频
+- **综合内容识别** — 自动识别混合内容（部分图片包含视频）
+- **幻灯片视频合成** — 支持淡入淡出 / Ken Burns 转场，可选原声或自定义配乐（开发中）
+- **桌面客户端** — 原生 Windows 窗口，无边框设计 + 系统托盘，关闭窗口自动最小化至托盘
 - **扫码登录** — 右上角扫码登录抖音，Cookie 自动保存以便后续请求
-- **标准模式** — 无需登录也可抓取部分内容
-- **任务管理** — 支持历史记录查看和删除
+- **任务管理** — 支持历史记录查看、单个删除及批量删除
+
+## 未来目标
+
+当前抖音平台上的实况照片无法与背景音乐合成为一条完整的视频，这一问题尚无妥善的解决方案。Ptu 致力于填补这一空白，实现实况照片与背景音乐的自动化融合输出。相关功能正在持续迭代中，敬请期待。
 
 ## 安装
 
 ### 方式一：下载 exe（推荐）
 
-从 [Releases](https://github.com/USER/Ptu/releases) 页面下载最新版 `Ptu.exe`，双击运行即可。
+从 [Releases](https://github.com/Fairc11/Ptu-Fairc11/releases) 页面下载最新版 `Ptu.exe`，双击运行即可。
 
 ### 方式二：源码运行
 
 ```bash
 pip install -r backend/requirements.txt
 playwright install chromium
-python run.py              # Web 模式（浏览器访问 http://127.0.0.1:8000）
+python run.py              # 桌面客户端
+python run.py --web        # Web 模式（浏览器访问 http://127.0.0.1:8000）
 ```
 
 ## 使用说明
 
-1. 启动程序，在浏览器中打开 http://127.0.0.1:8000
-2. 点击右上角「未登录」→ 扫码登录抖音（可选，标准模式无需登录）
+1. 启动程序，打开桌面窗口
+2. 点击右上角「未登录」→ 扫码登录抖音
 3. 粘贴抖音分享链接至输入框，点击抓取
 4. 下载素材 → 合成幻灯片视频
 
 ## 技术栈
 
 - **后端** — FastAPI + Uvicorn
-- **抓取** — Playwright + httpx
+- **抓取** — Playwright + httpx + f2（多路径兜底）
+- **桌面端** — pywebview（WebView2）
 - **视频合成** — FFmpeg
-- **前端** — Jinja2 + Vanilla JS + CSS（深色主题）
+- **前端** — Jinja2 + Vanilla JS + CSS（Noir 深色主题）
 - **打包** — PyInstaller + Inno Setup
 
+## 项目结构
+
+```
+├── run.py                 # 入口文件
+├── desktop_app.py         # 桌面客户端
+├── backend/app/
+│   ├── main.py            # FastAPI 主应用
+│   ├── api/               # API 路由
+│   ├── services/          # 核心服务（抓取、下载、合成）
+│   └── models/            # 数据模型
+├── backend/static/        # 前端资源
+├── backend/templates/     # HTML 模板
+└── releases/              # 发布版本归档
+```
+
 ## 更新日志
+
+### v1.1.0 Beta — 2026-05-10
+
+**新增**
+- 实况照片支持（LIVE_PHOTO）：图片与关联视频分别保存
+- 综合内容类型识别（COMPREHENSIVE）：混合内容自动处理
+- pywebview 桌面原生客户端：无边框窗口 + 系统托盘，关闭最小化至托盘
+- 多路径抓取架构：API 直调 → f2 库 → Playwright API → DOM 提取 → 轮播提取 → Viewer 翻页 → 兜底
+- WAF 绕过增强：两步导航 + 智能轮询 + 浏览器指纹隔离 + 自动重置
+- 三倍去重机制：URL base + CDN 签名 + 分辨率归一化
+- 原生文件对话框 + 系统通知
+- 窗口位置/大小状态记忆 + 单实例运行
+- 环境检测自动安装 Chromium/FFmpeg
+- 自动端口选择，前端 JS 模块化重构
+- Task store 新增 API：open-folder / files / batch-delete
+- 全局错误信息中文化
+
+**移除**
+- 标准模式（无需登录）：抓取功能现要求扫码登录
+- Web 模式不再作为默认入口，仅用于开发调试
+
+**变更**
+- 桌面模式为默认启动方式
+- 打包流程优化（PyInstaller + Inno Setup）
+- 图片 CDN 请求增加 Referer 头，修复 403 问题
 
 ### v1.0.0 Beta — 2026-05-08
 

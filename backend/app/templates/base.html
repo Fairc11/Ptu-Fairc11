@@ -10,12 +10,38 @@
         body { background: var(--bg-app); }
     </style>
 </head>
-<body>
+<body data-desktop="{{ 'true' if desktop_mode else '' }}">
     <!-- Toast Container -->
     <div id="toast-container"></div>
 
+    <!-- Custom Title Bar (desktop mode only) -->
+    <div id="custom-titlebar" onmousedown="if (event.button === 0) Ptu.desktop.startDrag()">
+        <div id="titlebar-drag">
+            <div id="titlebar-icon">P</div>
+            <span id="titlebar-text">Ptu 1.1.0</span>
+        </div>
+        <div id="titlebar-controls">
+            <button class="titlebar-btn" onclick="Ptu.desktop.minimize()" aria-label="最小化">
+                <svg viewBox="0 0 16 16"><rect x="3" y="8" width="10" height="1.5" rx="0.75" fill="currentColor"/></svg>
+            </button>
+            <button class="titlebar-btn" onclick="Ptu.desktop.maximize()" aria-label="最大化">
+                <svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+            </button>
+            <button class="titlebar-btn titlebar-close" onclick="Ptu.desktop.close()" aria-label="关闭">
+                <svg viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Splash Screen -->
+    <div id="splash">
+        <div class="splash-logo">P</div>
+        <div class="splash-spinner"></div>
+        <p class="splash-text" id="splashStatus">加载中...</p>
+    </div>
+
     <!-- App -->
-    <div id="app">
+    <div id="app" style="display:none">
         <!-- Top Bar -->
         <header id="topbar">
             <div id="topbar-left">
@@ -35,22 +61,38 @@
 
     <script src="{{ static_url }}/js/app.js"></script>
     <script>
+    // Splash lifecycle
     (function() {
+        var splash = document.getElementById('splash');
+        var app = document.getElementById('app');
+        var start = Date.now();
+        var status = document.getElementById('splashStatus');
+
         fetch('/api/login/status')
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                var ls = document.getElementById('login-status');
-                if (ls) {
-                    if (d.logged_in) {
-                        ls.textContent = '已登录';
-                        ls.className = 'status-badge status-success';
-                    } else {
-                        ls.textContent = '未登录';
-                        ls.className = 'status-badge status-pending';
-                    }
-                }
+                if (status) status.textContent = d.logged_in ? '已登录' : '准备就绪';
+                setTimeout(function() {
+                    splash.classList.add('animate-out');
+                    setTimeout(function() {
+                        splash.style.display = 'none';
+                        if (app) app.style.display = 'flex';
+                        // 未登录提示（不弹二维码）
+                        if (!d.logged_in && typeof Ptu !== 'undefined') {
+                            setTimeout(function() { Ptu.ui.toast.info('未登录，仅限标准模式'); }, 1500);
+                        }
+                    }, 500);
+                }, Math.max(0, 1200 - (Date.now() - start)));
             })
-            .catch(function() {});
+            .catch(function() {
+                setTimeout(function() {
+                    splash.classList.add('animate-out');
+                    setTimeout(function() {
+                        splash.style.display = 'none';
+                        if (app) app.style.display = 'flex';
+                    }, 500);
+                }, Math.max(0, 1200 - (Date.now() - start)));
+            });
     })();
     </script>
 </body>
