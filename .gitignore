@@ -11,12 +11,25 @@ build/
 # Runtime data
 data/
 logs/
+*.log
+ptu_boot.log
+ptu_error.log
 *.ptu_window_state.json
 .ptu_window_state.json
+
+# Sensitive credentials
+cookies.yaml
+backend/cookies.yaml
 
 # Environment
 .env
 backend/.env
+
+# Built releases
+releases/
+
+# Local backups
+备份_*/
 
 # IDE / Claude
 .claude/
