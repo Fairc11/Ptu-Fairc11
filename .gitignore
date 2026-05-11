@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Runtime data
+data/
+logs/
+*.ptu_window_state.json
+.ptu_window_state.json
+
+# Environment
+.env
+backend/.env
+
+# IDE / Claude
+.claude/
+
+# OS
+Thumbs.db
+desktop.ini

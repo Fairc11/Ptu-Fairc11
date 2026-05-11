@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Ptu{% endblock %}</title>
+    <link rel="stylesheet" href="{{ static_url }}/css/app.css">
+    <style>
+        ::selection { background: rgba(129,140,248,0.25); }
+        body { background: var(--bg-app); }
+    </style>
+</head>
+<body>
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <!-- App -->
+    <div id="app">
+        <!-- Top Bar -->
+        <header id="topbar">
+            <div id="topbar-left">
+                <span id="app-title">Ptu</span>
+                <span id="app-subtitle">抖音图文 / 视频下载工具</span>
+            </div>
+            <div id="topbar-right">
+                <span id="login-status" class="status-badge status-pending">未登录</span>
+                <button id="logout-btn" class="btn-text" style="display:none">退出</button>
+            </div>
+        </header>
+
+        <main id="content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <script src="{{ static_url }}/js/app.js"></script>
+    <script>
+    (function() {
+        fetch('/api/login/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var ls = document.getElementById('login-status');
+                if (ls) {
+                    if (d.logged_in) {
+                        ls.textContent = '已登录';
+                        ls.className = 'status-badge status-success';
+                    } else {
+                        ls.textContent = '未登录';
+                        ls.className = 'status-badge status-pending';
+                    }
+                }
+            })
+            .catch(function() {});
+    })();
+    </script>
+</body>
+</html>
