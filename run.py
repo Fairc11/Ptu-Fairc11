@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ptu v1.1.0 - 桌面客户端启动入口
+"""Ptu - 桌面客户端启动入口
 
 双击运行直接打开桌面窗口。
 """
@@ -12,6 +12,8 @@ import threading
 os.environ.setdefault("PYTHONUTF8", "1")
 
 _frozen = getattr(sys, 'frozen', False)
+
+VERSION = "1.3.0"  # Must match backend/app/version.py
 
 
 def _kill_port(port: int):
@@ -31,18 +33,21 @@ def _kill_port(port: int):
 
 
 def main():
+    _start_ts = __import__('time').time()
     # 启动日志文件（无论 console 与否都记录）
     _log_f = open("ptu_boot.log", "a", encoding="utf-8")
     def _log(msg):
+        _ts = __import__('time').time() - _start_ts
+        _full = f"[t={_ts:.2f}s] {msg}"
         # 控制台输出（窗口模式 sys.stdout 可能为 None）
         if sys.stdout:
-            sys.stdout.write(msg + "\n")
+            sys.stdout.write(_full + "\n")
             sys.stdout.flush()
         # 文件日志始终可写
-        _log_f.write(msg + "\n")
+        _log_f.write(_full + "\n")
         _log_f.flush()
 
-    _log(f"[Ptu] v1.2.0 启动中...")
+    _log(f"[Ptu] v{VERSION} 启动中...")
     _kill_port(8000)
 
     # 打包后自动检测并安装缺失组件（不阻塞启动）
@@ -81,7 +86,7 @@ if __name__ == "__main__":
         import traceback
         try:
             with open("ptu_error.log", "w", encoding="utf-8") as _f:
-                _f.write(f"Ptu v1.2.0 崩溃: {_e}\n{traceback.format_exc()}")
+                _f.write(f"Ptu v{VERSION} 崩溃: {_e}\n{traceback.format_exc()}")
         except Exception:
             pass
         raise

@@ -18,13 +18,13 @@
     <div id="custom-titlebar" onmousedown="if (event.button === 0) Ptu.desktop.startDrag()">
         <div id="titlebar-drag">
             <div id="titlebar-icon">P</div>
-            <span id="titlebar-text">Ptu 1.1.0</span>
+            <span id="titlebar-text">Ptu {{ version }}</span>
         </div>
         <div id="titlebar-controls">
             <button class="titlebar-btn" onclick="Ptu.desktop.minimize()" aria-label="最小化">
                 <svg viewBox="0 0 16 16"><rect x="3" y="8" width="10" height="1.5" rx="0.75" fill="currentColor"/></svg>
             </button>
-            <button class="titlebar-btn" onclick="Ptu.desktop.maximize()" aria-label="最大化">
+            <button id="maximize-btn" class="titlebar-btn" onclick="Ptu.desktop.maximize()" aria-label="最大化">
                 <svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
             </button>
             <button class="titlebar-btn titlebar-close" onclick="Ptu.desktop.close()" aria-label="关闭">
@@ -51,12 +51,29 @@
             <div id="topbar-right">
                 <span id="login-status" class="status-badge status-pending">未登录</span>
                 <button id="logout-btn" class="btn-text" style="display:none">退出</button>
+                <button id="clear-cache-btn" class="btn-text" title="清除浏览器缓存">清理缓存</button>
             </div>
         </header>
 
         <main id="content">
             {% block content %}{% endblock %}
         </main>
+
+        <!-- Floating Log Panel -->
+        <div id="log-panel" class="log-panel collapsed">
+            <div id="log-toggle" class="log-toggle" onclick="Ptu.ui.toggleLogPanel()">
+                <span id="log-indicator" class="log-indicator"></span>
+                <span>运行日志</span>
+                <span id="log-arrow" class="log-arrow">&#9650;</span>
+            </div>
+            <div id="log-body" class="log-body">
+                <div class="log-toolbar">
+                    <span id="log-count" class="log-count">0 条</span>
+                    <button class="btn-text btn-xs" onclick="Ptu.ui.exportLogs()">导出</button>
+                </div>
+                <pre id="log-content" class="log-content">等待日志...</pre>
+            </div>
+        </div>
     </div>
 
     <script src="{{ static_url }}/js/app.js"></script>

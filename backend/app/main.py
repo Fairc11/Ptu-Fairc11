@@ -5,8 +5,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 
 from .config import settings
+from .version import VERSION
+from .log_config import setup_logging
 from .models.task_store import TaskStore, store as task_store_ref
-from .api import router_scraper, router_download, router_media, router_ws, router_login
+from .api import router_scraper, router_download, router_media, router_ws, router_login, router_profile
 
 # 共享 httpx 客户端（复用连接池）
 _proxy_client = httpx.AsyncClient(
@@ -17,11 +19,12 @@ _proxy_client = httpx.AsyncClient(
     }
 )
 
-app = FastAPI(title="Ptu", version="1.2.0")
+app = FastAPI(title="Ptu", version=VERSION)
 
 
 @app.on_event("startup")
 async def startup():
+    setup_logging(debug=settings.debug)
     db_path = settings.tasks_db
     db_path.parent.mkdir(parents=True, exist_ok=True)
     store = TaskStore(db_path)
@@ -47,6 +50,7 @@ app.include_router(router_download.router)
 app.include_router(router_media.router)
 app.include_router(router_ws.router)
 app.include_router(router_login.router)
+app.include_router(router_profile.router)
 
 
 # ── CDN 代理（解决在线预览防盗链问题） ─────────────────────
@@ -88,7 +92,7 @@ async def index(request: Request):
     store = get_store()
     tasks = store.list_tasks()
     desktop_mode = request.query_params.get("desktop", "false").lower() in ("true", "1")
-    html = _render("index.html", tasks=tasks, desktop_mode=desktop_mode)
+    html = _render("index.html", tasks=tasks, desktop_mode=desktop_mode, version=VERSION)
     from fastapi.responses import HTMLResponse
     return HTMLResponse(html)
 
@@ -113,7 +117,7 @@ async def get_task(task_id: str):
     task = store.get(task_id)
     if not task:
         raise HTTPException(404, "任务未找到")
-    return task
+    return task.model_dump(mode="json")
 
 
 @app.delete("/api/tasks/{task_id}")
@@ -154,6 +158,61 @@ async def batch_delete(data: dict):
             store.delete(task_id)
             deleted.append(task_id)
     return {"deleted": deleted, "count": len(deleted)}
+
+
+@app.get("/api/logs")
+async def get_logs(lines: int = 100):
+    """Return recent N lines from the log file."""
+    from .log_config import LOG_DIR
+    log_file = LOG_DIR / "ptu.log"
+    if not log_file.exists():
+        return {"lines": [], "total": 0}
+    try:
+        text = log_file.read_text("utf-8", errors="replace")
+        all_lines = text.splitlines()
+        recent = all_lines[-lines:]
+        return {"lines": recent, "total": len(all_lines)}
+    except Exception as e:
+        return {"lines": [], "total": 0, "error": str(e)}
+
+
+@app.get("/api/logs/export")
+async def export_logs():
+    """Download the full log file via browser."""
+    from .log_config import LOG_DIR
+    from fastapi.responses import FileResponse
+    log_file = LOG_DIR / "ptu.log"
+    if not log_file.exists():
+        from fastapi import HTTPException
+        raise HTTPException(404, "日志文件不存在")
+    return FileResponse(str(log_file), filename="ptu.log")
+
+
+@app.post("/api/logs/save")
+async def save_logs():
+    """保存日志到应用数据目录，返回路径。"""
+    from .log_config import LOG_DIR
+    import shutil, datetime
+    log_file = LOG_DIR / "ptu.log"
+    if not log_file.exists():
+        from fastapi import HTTPException
+        raise HTTPException(404, "日志文件不存在")
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    export_name = f"ptu_log_{ts}.log"
+    export_path = LOG_DIR / export_name
+    shutil.copy2(str(log_file), str(export_path))
+    return {"status": "ok", "path": str(export_path), "filename": export_name}
+
+
+@app.post("/api/browser/clear-cache")
+async def clear_browser_cache():
+    """清除浏览器缓存和登录状态。"""
+    from .services.scraper import scraper as douyin_scraper
+    try:
+        await douyin_scraper.clear_cache()
+        return {"status": "ok", "message": "缓存和Cookie已清除"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/tasks/{task_id}/open-folder")
