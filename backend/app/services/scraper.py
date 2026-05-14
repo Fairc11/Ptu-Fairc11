@@ -10,7 +10,7 @@ import yaml
 import httpx
 from pathlib import Path
 from typing import Optional
-from ..models.schemas import ScrapeResult, MediaType, LivePhotoSource
+from ..models.schemas import ScrapeResult, MediaType, LivePhotoSource, ProfilePost, ProfileResult
 from .ttwid import ensure_ttwid
 
 
@@ -81,6 +81,25 @@ class DouyinScraper:
         except Exception:
             self._pw_browser = await self._playwright.chromium.launch(headless=True, args=launch_args)
         return self._pw_browser
+
+    async def clear_cache(self):
+        """清除浏览器缓存和登录状态。"""
+        # 关闭当前浏览器
+        if self._pw_browser:
+            try:
+                await self._pw_browser.close()
+            except Exception:
+                pass
+            self._pw_browser = None
+        # 清除 cookies.yaml
+        try:
+            p = Path(self._cookies_path)
+            if p.exists():
+                p.write_text("", encoding="utf-8")
+        except Exception:
+            pass
+        self.cookies = {}
+        print("[PW] 浏览器缓存和Cookie已清除")
 
     async def close(self):
         if self._pw_browser:
@@ -464,34 +483,65 @@ class DouyinScraper:
     async def _extract_dom_to_result(self, page, page_url: str) -> Optional[ScrapeResult]:
         """从已渲染的 DOM 中提取图片和元数据。"""
         try:
-            # 首次提取：优先获取视口内已加载的图片
+            # 首次提取：收集所有候选图片（含尺寸信息用于自适应过滤）
             data = await page.evaluate("""() => {
                 const seen = new Set();
-                const images = [];
+                const items = [];
                 const vpW = window.innerWidth, vpH = window.innerHeight;
+                const colLeft = vpW * 0.2, colRight = vpW * 0.65;
                 document.querySelectorAll('img').forEach(img => {
                     let s = img.src || img.getAttribute('data-src') || '';
                     if (!s) { const bg = window.getComputedStyle(img).backgroundImage;
                         if (bg && bg !== 'none') { const m = bg.match(/url\\(["']?([^"')]+)["']?\\)/); if (m) s = m[1]; } }
                     if (!s || !(s.includes('douyinpic.com') || s.includes('tos-cn-'))) return;
-                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo/.test(s)) return;
+                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo|sticker|expression/.test(s)) return;
                     const nw = img.naturalWidth;
-                    if (nw > 0 && nw < 400) return;
+                    if (nw > 0 && nw < 80) return;
                     const base = s.split('?')[0].split('~tplv')[0];
                     if (seen.has(base)) return;
                     seen.add(base);
                     const rect = img.getBoundingClientRect();
-                    const inViewport = rect.top >= 0 && rect.top < vpH && rect.width > 100;
-                    images.push({url: s, inViewport: inViewport, base: base});
+                    const cx = rect.left + rect.width / 2;
+                    const inCenter = cx >= colLeft && cx <= colRight;
+                    items.push({
+                        url: s, nw: nw, base: base,
+                        inViewport: rect.top >= 0 && rect.top < vpH && rect.width > 100,
+                        inCenter: inCenter, top: rect.top,
+                    });
                 });
-                const inView = images.filter(i => i.inViewport);
-                const outView = images.filter(i => !i.inViewport);
-                const prioritized = inView.concat(outView);
-                return {
-                    images: prioritized.map(i => i.url),
-                    title: document.title || '',
-                };
+                return items;
             }""")
+            if not data or len(data) == 0:
+                return None
+
+            # 自适应过滤：计算尺寸中位数，去掉明显偏小的
+            all_nw = sorted([x["nw"] for x in data if x["nw"] > 0])
+            median_nw = all_nw[len(all_nw) // 2] if all_nw else 800
+            threshold = max(400, median_nw * 0.4)
+
+            # 中心区域优先，其次按尺寸过滤
+            center = [x for x in data if x.get("inCenter") and x["nw"] >= threshold]
+            other = [x for x in data if not x.get("inCenter") and x["nw"] >= threshold]
+
+            # 如果中心区域有足够的图，只用中心区域的
+            source = center if len(center) >= max(2, len(data) * 0.3) else (center + other)
+
+            # 去重、排序
+            seen_base = set()
+            deduped = []
+            for x in source:
+                b = x["base"]
+                if b not in seen_base:
+                    seen_base.add(b)
+                    deduped.append(x["url"])
+
+            all_imgs = deduped[:50]
+            # 从页面标题提取
+            try:
+                page_title = await page.evaluate("document.title || ''")
+                title = re.sub(r'[#].*', '', (page_title or "")).strip()
+            except Exception:
+                title = ""
             if not data or not data.get("images"):
                 return None
 
@@ -501,21 +551,31 @@ class DouyinScraper:
             await asyncio.sleep(1.5)
             more_imgs = await page.evaluate("""() => {
                 const seen = new Set();
-                const results = [];
+                const items = [];
+                const vpH = window.innerHeight, vpW = window.innerWidth;
+                const colLeft = vpW * 0.2, colRight = vpW * 0.65;
                 document.querySelectorAll('img').forEach(img => {
                     let s = img.src || img.getAttribute('data-src') || '';
                     if (!s) { const bg = window.getComputedStyle(img).backgroundImage;
                         if (bg && bg !== 'none') { const m = bg.match(/url\\(["']?([^"')]+)["']?\\)/); if (m) s = m[1]; } }
                     if (!s || !(s.includes('douyinpic.com') || s.includes('tos-cn-'))) return;
-                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo/.test(s)) return;
+                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo|sticker|expression/.test(s)) return;
                     const nw = img.naturalWidth;
-                    if (nw > 0 && nw < 400) return;
+                    if (nw > 0 && nw < 80) return;
+                    const rect = img.getBoundingClientRect();
+                    if (rect.top > vpH * 0.7) return;
+                    const cx = rect.left + rect.width / 2;
+                    if (cx < colLeft || cx > colRight) return;
                     const base = s.split('?')[0].split('~tplv')[0];
                     if (seen.has(base)) return;
                     seen.add(base);
-                    results.push(s);
+                    items.push({url: s, nw: nw});
                 });
-                return results;
+                // 自适应过滤：只保留尺寸 >= 中位数*0.4 的
+                const sizes = items.map(x => x.nw).filter(x => x > 0).sort((a,b) => a-b);
+                const med = sizes.length > 0 ? sizes[Math.floor(sizes.length/2)] : 800;
+                const thr = Math.max(400, med * 0.4);
+                return items.filter(x => x.nw >= thr).map(x => x.url);
             }""")
             # 去重合并
             existing = set(img.split('?')[0].split('~tplv')[0] for img in all_imgs)
@@ -1184,8 +1244,7 @@ class DouyinScraper:
             if isinstance(detail.get("owner"), dict):
                 author = detail["owner"].get("nickname", "") or author
 
-            imgs = []
-            # 图集图片
+            # 提取图片和实况照片数据
             img_sources = []
             if detail.get("image_post_info"):
                 img_sources = detail["image_post_info"].get("images", [])
@@ -1195,17 +1254,30 @@ class DouyinScraper:
                 img_sources = detail["note_images"]
 
             seen_urls = set()
+            live_data = []
             for img in img_sources:
                 if not isinstance(img, dict):
                     continue
-                url_list = img.get("url_list", [])
-                if url_list and url_list[0]:
-                    u = url_list[0]
-                    if u.startswith("http") and u not in seen_urls:
-                        seen_urls.add(u)
-                        imgs.append(u)
+                ul = img.get("url_list", [])
+                if not (ul and ul[0]):
+                    continue
+                img_url = ul[0]
+                if img_url in seen_urls:
+                    continue
+                seen_urls.add(img_url)
+                # 检测实况照片视频
+                video_url = ""
+                video_obj = img.get("video")
+                if isinstance(video_obj, dict):
+                    play_addr = video_obj.get("play_addr", {})
+                    vlist = play_addr.get("url_list", [])
+                    if vlist and vlist[0]:
+                        video_url = vlist[0]
+                elif isinstance(img.get("video_url"), str):
+                    video_url = img["video_url"]
+                live_data.append(LivePhotoSource(image_url=img_url, video_url=video_url))
 
-            if not imgs:
+            if not live_data:
                 # 兜底：直接搜 dict 里的 url
                 for f in ["image_data", "images", "note_images"]:
                     for x in (detail.get(f, []) or []):
@@ -1213,7 +1285,10 @@ class DouyinScraper:
                             u = x.get("url") or x.get("display_url") or (x.get("url_list") or [None])[0]
                             if u and u.startswith("http") and u not in seen_urls:
                                 seen_urls.add(u)
-                                imgs.append(u)
+                                live_data.append(LivePhotoSource(image_url=u, video_url=""))
+
+            if not live_data:
+                return None
 
             # 提取音乐信息
             music_url = ""
@@ -1230,13 +1305,147 @@ class DouyinScraper:
             # 正文文字（desc 包含标题+正文+#话题）
             text_content = detail.get("desc", "") or ""
 
-            if imgs:
-                return ScrapeResult(
-                    title=title, author=author, media_type=MediaType.IMAGE_SET,
-                    image_urls=imgs,
-                    music_url=music_url or None, music_title=music_title,
-                    text_content=text_content,
-                )
+            # 判断媒体类型
+            images = [lp.image_url for lp in live_data]
+            has_any_video = any(lp.video_url for lp in live_data)
+            all_have_video = all(lp.video_url for lp in live_data) if live_data else False
+            if has_any_video and not all_have_video:
+                media_type = MediaType.COMPREHENSIVE
+            elif has_any_video:
+                media_type = MediaType.LIVE_PHOTO
+            else:
+                media_type = MediaType.IMAGE_SET
+
+            return ScrapeResult(
+                title=title, author=author, media_type=media_type,
+                image_urls=images, live_photo_data=live_data,
+                music_url=music_url or None, music_title=music_title,
+                text_content=text_content,
+            )
         except Exception as e:
             print(f"[f2] 失败: {e}")
         return None
+
+    async def scrape_profile(self, profile_url: str, max_posts: int = 50) -> ProfileResult:
+        """抓取用户主页所有作品列表。"""
+        browser = await self._get_browser()
+        ctx = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            viewport={"width": 1920, "height": 1080},
+        )
+        try:
+            await ctx.add_init_script(DouyinScraper.ENHANCED_STEALTH)
+            pw_cookies = [
+                {"name": k, "value": v, "domain": ".douyin.com", "path": "/"}
+                for k, v in self.cookies.items() if v
+            ]
+            if pw_cookies:
+                await ctx.add_cookies(pw_cookies)
+            page = await ctx.new_page()
+
+            # 两步导航：首页→目标页面
+            try:
+                await page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=15000)
+                for _ in range(15):
+                    await asyncio.sleep(1)
+                    if 'douyin.com' in page.url and 'mon.zijie' not in page.url:
+                        break
+            except Exception:
+                pass
+
+            await page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
+
+            # 等待作品网格加载
+            try:
+                await page.wait_for_function(
+                    '() => document.querySelectorAll(\'[class*="AccountCard"], '
+                    '[class*="PostContainer"], img[class*="avatar"]\').length > 0',
+                    timeout=15000
+                )
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+            # 提取用户信息
+            user_info = await page.evaluate("""() => {
+                const nameEl = document.querySelector('[class*="nickname"], [class*="userName"], [class*="username"]');
+                const avatarEl = document.querySelector('[class*="avatar"] img, [class*="Avatar"] img');
+                return {
+                    user_name: nameEl ? nameEl.textContent.trim() : '',
+                    avatar_url: avatarEl ? (avatarEl.src || '') : '',
+                };
+            }""")
+
+            # 滚动加载，收集作品
+            seen_ids = set()
+            posts = []
+            idle_scrolls = 0
+
+            for scroll_round in range(30):  # 最多滚 30 轮
+                # 提取当前页所有可见作品
+                new_posts = await page.evaluate("""() => {
+                    const results = [];
+                    const seenLocal = {};
+                    const links = document.querySelectorAll('a[href*="/note/"], a[href*="/video/"]');
+                    for (let i = 0; i < links.length; i++) {
+                        const link = links[i];
+                        const href = link.href || '';
+                        const m = href.match(/\\/(note|video)\\/(\\d+)/);
+                        if (!m) continue;
+                        const id = m[2];
+                        if (seenLocal[id]) continue;
+                        seenLocal[id] = true;
+                        const img = link.querySelector('img');
+                        const imgSrc = img ? (img.src || img.getAttribute('data-src') || '') : '';
+                        const desc = link.getAttribute('title') || '';
+                        results.push({
+                            aweme_id: id,
+                            cover_url: imgSrc,
+                            desc: desc.trim(),
+                            media_type: m[1] === 'video' ? 'video' : 'image',
+                            share_url: 'https://www.douyin.com/' + m[1] + '/' + id,
+                        });
+                    }
+                    return results;
+                }""")
+
+                for p in new_posts:
+                    if p["aweme_id"] not in seen_ids and len(posts) < max_posts:
+                        seen_ids.add(p["aweme_id"])
+                        posts.append(ProfilePost(**p))
+
+                if len(posts) >= max_posts:
+                    break
+
+                # 滚动加载更多
+                prev_height = await page.evaluate("document.documentElement.scrollHeight")
+                await page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+                await asyncio.sleep(2)
+                new_height = await page.evaluate("document.documentElement.scrollHeight")
+
+                if new_height == prev_height:
+                    idle_scrolls += 1
+                    if idle_scrolls >= 3:
+                        break
+                else:
+                    idle_scrolls = 0
+
+            return ProfileResult(
+                user_name=user_info.get("user_name", ""),
+                avatar_url=user_info.get("avatar_url", ""),
+                posts=posts,
+                total=len(posts),
+            )
+        except Exception as e:
+            print(f"[Profile] 抓取失败: {e}")
+            raise
+        finally:
+            try:
+                await ctx.close()
+            except Exception:
+                pass
+
+
+# Global scraper instance (shared across routers)
+scraper = DouyinScraper()

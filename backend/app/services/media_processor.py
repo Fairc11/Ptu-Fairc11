@@ -51,6 +51,11 @@ class MediaProcessor:
             f"准备渲染 {len(valid_images)} 张图片"
         )
 
+        # 实况照片合成：使用视频+图片配对
+        if live_photo_videos and len(live_photo_videos) > 0:
+            cmd = self._build_live_photo_command(
+                valid_images, live_photo_videos, music_path, options, str(output_path)
+            )
         # Build and execute FFmpeg command based on transition type
         if options.transition == TransitionType.KEN_BURNS:
             cmd = self._build_kenburns_command(
@@ -253,6 +258,60 @@ class MediaProcessor:
         else:
             cmd.extend(["-an"])
 
+        cmd.append(output)
+        return cmd
+
+    def _build_live_photo_command(
+        self, images: list[str], videos: list[str],
+        music: Optional[str], options: RenderOptions, output: str
+    ) -> list[str]:
+        """Live photo synthesis: combine image+video pairs with music."""
+        import os as _os
+        import tempfile
+        cmd = [self.ffmpeg, "-y"]
+        has_music = music and Path(music).exists()
+
+        # Each live photo: video first, then still image as overlay
+        n = min(len(images), len(videos))
+        concat_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        )
+        lines = []
+        for i in range(n):
+            vid_path = _os.path.abspath(videos[i])
+            lines.append(f"file '{vid_path}'")
+            # Show video for its duration (ffprobe not needed, use file duration)
+            # Then show still image for the remaining image_duration
+            img_path = _os.path.abspath(images[i])
+            lines.append(f"file '{img_path}'")
+            lines.append(f"duration {options.image_duration}")
+        # Handle remaining images without video (COMPREHENSIVE type)
+        for i in range(n, len(images)):
+            img_path = _os.path.abspath(images[i])
+            lines.append(f"file '{img_path}'")
+            lines.append(f"duration {options.image_duration}")
+
+        if lines:
+            concat_file.write("\n".join(lines))
+            concat_file.close()
+            cmd.extend(["-f", "concat", "-safe", "0", "-i", concat_file.name])
+
+        # Add music if available
+        if has_music:
+            cmd.extend(["-i", _os.path.abspath(music)])
+
+        # Scale and encode
+        res = options.resolution
+        w, h = res.split("x")
+        cmd.extend([
+            "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-pix_fmt", "yuv420p",
+        ])
+        if has_music:
+            cmd.extend(["-c:a", "aac", "-b:a", "192k", "-shortest"])
+        else:
+            cmd.extend(["-an"])
         cmd.append(output)
         return cmd
 

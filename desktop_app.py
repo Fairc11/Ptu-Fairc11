@@ -1,17 +1,6 @@
 #!/usr/bin/env python3
 """
-Ptu v1.1.0 - Windows 桌面客户端
-
-功能:
-  - 原生 Windows 窗口 (WebView2)，无边框自定义标题栏
-  - 桌面模式是默认入口，不弹浏览器
-  - 关闭窗口 → 最小化到系统托盘（不退出）
-  - 系统托盘右键菜单：显示/退出
-  - 单实例运行
-  - 窗口位置/大小记忆
-  - 原生文件保存/打开对话框
-  - 系统通知
-  - 自动选择可用端口
+Ptu - Windows 桌面客户端
 """
 from __future__ import annotations
 import os
@@ -24,7 +13,9 @@ from pathlib import Path
 # 单实例锁
 try:
     import win32event, win32api
-    mutex = win32event.CreateMutex(None, False, "Ptu-Desktop-1.1.0")
+    from backend.app.version import VERSION
+    mutex_name = f"Ptu-Desktop-{VERSION}"
+    mutex = win32event.CreateMutex(None, False, mutex_name)
     if win32api.GetLastError() == 183:
         print("[Ptu] 程序已在运行")
         sys.exit(0)
@@ -136,11 +127,13 @@ class DesktopApp:
 
     def run(self):
         import webview
+        import time as _time
+        _t0 = _time.time()
 
         self._init_js_api()
 
         # 启动服务器
-        print(f"[桌面客户端] 启动服务器 (端口 {self.port})...")
+        print(f"[桌面客户端] 启动服务器 (端口 {self.port})... [t={_time.time()-_t0:.2f}s]")
         self.server_thread = threading.Thread(
             target=self._start_server, daemon=True
         )
@@ -150,6 +143,7 @@ class DesktopApp:
             print("[桌面客户端] 服务器启动超时!")
             return
 
+        print(f"[桌面客户端] 服务器就绪 [t={_time.time()-_t0:.2f}s]")
         server_url = f"http://{self.host}:{self.port}/?desktop=1"
         ws = self.window_state
 
@@ -207,7 +201,8 @@ class DesktopApp:
 
 def main():
     print("=" * 50)
-    print("  Ptu v1.1.0 - Windows 桌面客户端")
+    from backend.app.version import VERSION
+    print(f"  {VERSION} - Windows 桌面客户端")
     print("=" * 50)
     print()
 

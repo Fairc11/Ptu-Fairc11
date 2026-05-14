@@ -47,6 +47,7 @@ class ScrapeResult(BaseModel):
     live_photo_data: list[LivePhotoSource] = []
     aweme_id: str = ""
     raw_data: dict | None = None
+    text_content: str = ""             # 正文文字内容（下载时生成 post.txt）
 
 
 class DownloadProgress(BaseModel):
@@ -77,6 +78,7 @@ class TaskInfo(BaseModel):
     download_path: str | None = None
     output_path: str | None = None
     error_message: str | None = None
+    app_version: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
@@ -92,3 +94,22 @@ class ScrapeResponse(BaseModel):
 
 class RenderRequest(BaseModel):
     options: RenderOptions = RenderOptions()
+
+
+class ProfilePost(BaseModel):
+    """单个主页作品的摘要信息。"""
+    aweme_id: str
+    desc: str = ""
+    cover_url: str = ""
+    media_type: str = ""        # "video" | "image"
+    share_url: str = ""
+    create_time: int = 0
+
+
+class ProfileResult(BaseModel):
+    """主页抓取结果。"""
+    user_name: str = ""
+    user_id: str = ""
+    avatar_url: str = ""
+    posts: list[ProfilePost] = []
+    total: int = 0
