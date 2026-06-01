@@ -26,6 +26,12 @@ for f in ['cookies.yaml', 'config.yaml']:
     if p.exists():
         datas.append((str(p), '.'))
 
+# 收集 certifi 的 SSL 证书（httpx 需要）
+import certifi
+_cacert = Path(certifi.where())
+if _cacert.exists():
+    datas.append((str(_cacert), 'certifi'))
+
 # 收集 f2 库的配置文件
 import importlib.util as _iutil
 _f2_spec = _iutil.find_spec('f2')
@@ -52,6 +58,7 @@ a = Analysis(
         'jinja2',
         'jinja2.ext',
         'httpx',
+        'certifi',
         'yaml',
         'PIL',
         'pillow_heif',
@@ -64,7 +71,6 @@ a = Analysis(
         'playwright',
         'playwright.async_api',
         'browser_cookie3',
-        'pywebview',
         'webview',
         'webview.platforms.winforms',
         'plyer',
@@ -98,7 +104,6 @@ a = Analysis(
         'tkinter', 'matplotlib', 'numpy', 'scipy', 'pandas',
         'PyQt5', 'PySide2', 'PySide6',
         'setuptools', 'pip', 'pytest', 'unittest',
-        'cryptography',
     ],
 )
 

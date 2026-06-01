@@ -21,6 +21,9 @@ _proxy_client = httpx.AsyncClient(
 
 app = FastAPI(title="Ptu", version=VERSION)
 
+# 热重载：每次服务器启动生成唯一 ID，前端轮询检测变化自动刷新
+_build_id = str(__import__('time').time())
+
 
 @app.on_event("startup")
 async def startup():
@@ -82,8 +85,9 @@ jinja_env = Environment(
 
 
 def _render(name: str, **kwargs):
+    import time
     t = jinja_env.get_template(name)
-    return t.render(**kwargs, static_url="/static")
+    return t.render(**kwargs, static_url="/static", cache_buster=str(int(time.time())))
 
 
 @app.get("/")
@@ -94,7 +98,11 @@ async def index(request: Request):
     desktop_mode = request.query_params.get("desktop", "false").lower() in ("true", "1")
     html = _render("index.html", tasks=tasks, desktop_mode=desktop_mode, version=VERSION)
     from fastapi.responses import HTMLResponse
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    })
 
 
 @app.get("/api/tasks")
@@ -176,32 +184,73 @@ async def get_logs(lines: int = 100):
         return {"lines": [], "total": 0, "error": str(e)}
 
 
+@app.get("/api/logs/files")
+async def list_log_files():
+    """列出 data/logs/runs/ 下自动保存的运行日志。"""
+    from .log_config import RUNS_DIR, get_current_run_log
+    files = []
+    current = get_current_run_log()
+    if RUNS_DIR.exists():
+        for f in sorted(RUNS_DIR.glob("ptu_*.log"), key=lambda p: p.stat().st_mtime, reverse=True):
+            files.append({
+                "name": f.name,
+                "size": f.stat().st_size,
+                "date": f.stem.replace("ptu_", ""),
+                "current": bool(current and f.resolve() == current.resolve()),
+            })
+    return {"files": files, "dir": str(RUNS_DIR)}
+
+
 @app.get("/api/logs/export")
-async def export_logs():
-    """Download the full log file via browser."""
-    from .log_config import LOG_DIR
+async def export_logs(file: str | None = None):
+    """Download the current run log, or a selected historical log."""
+    from .log_config import LOG_DIR, RUNS_DIR, EXPORTS_DIR, get_current_run_log
     from fastapi.responses import FileResponse
-    log_file = LOG_DIR / "ptu.log"
-    if not log_file.exists():
+    if file:
+        safe_name = Path(file).name
+        candidates = [
+            RUNS_DIR / safe_name,
+            EXPORTS_DIR / safe_name,
+            LOG_DIR / safe_name,
+        ]
+        log_file = next((p for p in candidates if p.exists() and p.is_file()), None)
+    else:
+        log_file = get_current_run_log()
+        if not log_file or not log_file.exists():
+            log_file = LOG_DIR / "ptu.log"
+    if not log_file or not log_file.exists():
         from fastapi import HTTPException
         raise HTTPException(404, "日志文件不存在")
-    return FileResponse(str(log_file), filename="ptu.log")
+    return FileResponse(str(log_file), filename=log_file.name)
 
 
 @app.post("/api/logs/save")
 async def save_logs():
-    """保存日志到应用数据目录，返回路径。"""
-    from .log_config import LOG_DIR
+    """保存当前运行日志快照到 data/logs/exports/，返回路径。"""
+    from .log_config import LOG_DIR, EXPORTS_DIR, get_current_run_log
     import shutil, datetime
-    log_file = LOG_DIR / "ptu.log"
+    log_file = get_current_run_log()
+    if not log_file or not log_file.exists():
+        log_file = LOG_DIR / "ptu.log"
     if not log_file.exists():
         from fastapi import HTTPException
         raise HTTPException(404, "日志文件不存在")
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    export_name = f"ptu_log_{ts}.log"
-    export_path = LOG_DIR / export_name
+    export_name = f"ptu_run_{ts}.log"
+    export_path = EXPORTS_DIR / export_name
     shutil.copy2(str(log_file), str(export_path))
     return {"status": "ok", "path": str(export_path), "filename": export_name}
+
+
+@app.get("/api/build-id")
+async def build_id():
+    """热重载：前端轮询此端点，ID 变化时自动刷新页面。"""
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"id": _build_id}, headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+    })
 
 
 @app.post("/api/browser/clear-cache")

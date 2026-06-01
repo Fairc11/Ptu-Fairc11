@@ -87,7 +87,7 @@ class JsApi:
         except Exception:
             pass
 
-    # ── Window Management (frameless mode) ─────────────────────────────
+    # ── Window Management ──────────────────────────────────────────────
 
     def minimize_window(self):
         if self._window:
@@ -111,17 +111,17 @@ class JsApi:
                 pass
 
     def close_window(self):
-        """关闭窗口（最小化到托盘，不退出）。"""
+        """关闭窗口并退出应用。"""
         if self._window:
             try:
-                self._window.hide()
+                self._window.destroy()
             except Exception:
                 pass
 
     def is_maximized(self) -> bool:
         if self._window:
             try:
-                return self._window.fullscreen or False
+                return bool(getattr(self._window, "maximized", False))
             except Exception:
                 pass
         return False
@@ -141,9 +141,75 @@ class JsApi:
 
     def set_clipboard(self, text: str):
         try:
-            subprocess.run(["clip"], input=text, text=True, check=False)
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0002
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            data = (text or "") + "\0"
+            byte_count = len(data.encode("utf-16-le"))
+            handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, byte_count)
+            if handle and user32.OpenClipboard(None):
+                try:
+                    user32.EmptyClipboard()
+                    kernel32.GlobalLock.restype = ctypes.c_void_p
+                    ptr = kernel32.GlobalLock(handle)
+                    if ptr:
+                        try:
+                            ctypes.memmove(ptr, data.encode("utf-16-le"), byte_count)
+                        finally:
+                            kernel32.GlobalUnlock(handle)
+                        user32.SetClipboardData(CF_UNICODETEXT, handle)
+                        handle = None
+                        return
+                finally:
+                    user32.CloseClipboard()
+            if handle:
+                kernel32.GlobalFree(handle)
         except Exception:
             pass
+
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Set-Clipboard -Value $input"],
+                input=text or "", text=True, encoding="utf-8", check=False,
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+
+    def get_clipboard(self) -> str:
+        # Prefer the Win32 clipboard API. It is faster and more reliable in
+        # pywebview/windowless packaged mode than spawning PowerShell.
+        try:
+            CF_UNICODETEXT = 13
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            if user32.OpenClipboard(None):
+                try:
+                    handle = user32.GetClipboardData(CF_UNICODETEXT)
+                    if handle:
+                        kernel32.GlobalLock.restype = ctypes.c_void_p
+                        ptr = kernel32.GlobalLock(handle)
+                        if ptr:
+                            try:
+                                text = ctypes.wstring_at(ptr)
+                                if text:
+                                    return text.strip()
+                            finally:
+                                kernel32.GlobalUnlock(handle)
+                finally:
+                    user32.CloseClipboard()
+        except Exception:
+            pass
+
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+                capture_output=True, text=True, timeout=5
+            )
+            return r.stdout.strip()
+        except Exception:
+            return ""
 
     # ── System Info ────────────────────────────────────────────────────
 

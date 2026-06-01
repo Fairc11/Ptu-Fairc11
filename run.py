@@ -8,12 +8,23 @@ import os
 import sys
 import subprocess
 import threading
+from pathlib import Path
 
 os.environ.setdefault("PYTHONUTF8", "1")
 
-_frozen = getattr(sys, 'frozen', False)
+# 封包后设置 SSL 证书路径（certifi 在 frozen 环境找不到 cacert.pem）
+if getattr(sys, 'frozen', False):
+    _cacert = Path(sys._MEIPASS) / "certifi" / "cacert.pem"
+    if _cacert.exists():
+        os.environ["SSL_CERT_FILE"] = str(_cacert)
+        os.environ["REQUESTS_CA_BUNDLE"] = str(_cacert)
 
-VERSION = "1.3.0"  # Must match backend/app/version.py
+_frozen = getattr(sys, 'frozen', False)
+if _frozen:
+    _runtime_root = Path(os.environ.get("PTU_RUNTIME_DIR", "") or Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Ptu")
+    os.environ.setdefault("PTU_RUNTIME_DIR", str(_runtime_root))
+
+from backend.app.version import VERSION
 
 
 def _kill_port(port: int):
@@ -35,7 +46,10 @@ def _kill_port(port: int):
 def main():
     _start_ts = __import__('time').time()
     # 启动日志文件（无论 console 与否都记录）
-    _log_f = open("ptu_boot.log", "a", encoding="utf-8")
+    # 封包安装到 Program Files 后不可写，运行时日志必须放到用户目录。
+    _log_dir = Path(os.environ["PTU_RUNTIME_DIR"]) if getattr(sys, 'frozen', False) else Path(__file__).parent
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _log_f = open(str(_log_dir / "ptu_boot.log"), "a", encoding="utf-8")
     def _log(msg):
         _ts = __import__('time').time() - _start_ts
         _full = f"[t={_ts:.2f}s] {msg}"
@@ -85,7 +99,10 @@ if __name__ == "__main__":
     except Exception as _e:
         import traceback
         try:
-            with open("ptu_error.log", "w", encoding="utf-8") as _f:
+            _err_dir = Path(os.environ.get("PTU_RUNTIME_DIR", "")) if getattr(sys, 'frozen', False) else Path(__file__).parent
+            _err_dir.mkdir(parents=True, exist_ok=True)
+            _err_log = _err_dir / "ptu_error.log"
+            with open(str(_err_log), "w", encoding="utf-8") as _f:
                 _f.write(f"Ptu v{VERSION} 崩溃: {_e}\n{traceback.format_exc()}")
         except Exception:
             pass

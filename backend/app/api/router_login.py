@@ -1,6 +1,7 @@
 """登录相关 API 路由."""
 from fastapi import APIRouter, HTTPException
 from ..services.qr_login import qr_service
+from ..services.scraper import scraper as douyin_scraper
 
 router = APIRouter(prefix="/api/login", tags=["login"])
 
@@ -32,12 +33,16 @@ async def check_scan():
 @router.post("/confirm")
 async def confirm():
     """确认登录并保存 Cookie."""
-    return await qr_service.confirm_login()
+    result = await qr_service.confirm_login()
+    if result.get("status") == "done":
+        # 登录成功后让 scraper 重新加载 cookies
+        douyin_scraper._load_cookies(douyin_scraper._cookies_path)
+    return result
 
 
 @router.post("/logout")
 async def logout():
-    """清除登录状态."""
+    """清除登录状态（同时清理浏览器缓存）。"""
     import yaml
     path = qr_service.cookies_path
     if path.exists():
@@ -46,4 +51,9 @@ async def logout():
             "passport_csrf_token": "", "sid_guard": "",
         }, allow_unicode=True), "utf-8")
     await qr_service.close()
+    # 同步清除浏览器缓存
+    try:
+        await douyin_scraper.clear_cache()
+    except Exception:
+        pass
     return {"status": "ok"}

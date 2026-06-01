@@ -1678,3 +1678,232 @@ if _f2_spec and _f2_spec.submodule_search_locations:
 4. **字符串形式的模块导入全部改为直接 import**
 5. **console=False 时所有 stdout 操作必须加 None 检查**
 
+---
+
+## v1.4.0 迭代记录 (2026-05-27)
+
+### 背景
+
+用户回归项目，提出三个任务：
+1. 修复抓取时误抓"喜欢"视频封面的 Bug
+2. 完善主页全量抓取的批量下载功能
+3. 前端 UI 简约化
+4. 按文档规范整理
+
+同时发现打包版本给别人使用时扫码登录无效的问题。
+
+---
+
+### Phase 1：打包 Bug 审计与修复
+
+#### Bug B4：cookies 路径不一致（高危）
+
+**现象**：打包 exe 上传 GitHub，别人下载后扫码登录看起来成功，但抓取报"未登录"。
+
+**根因**：
+- `qr_login.py` 的 `get_qr_service()` 用 `settings.cookies_path`（绝对路径，基于 `_get_base_dir()` 解析）
+- `scraper.py` 的 `DouyinScraper(cookies_path="cookies.yaml")` 用相对路径
+- 模块级单例 `scraper = DouyinScraper()` 也用默认相对路径
+- 当 CWD != exe_dir 时，两个服务读写的 cookies.yaml 不是同一个文件
+
+**修复**：`DouyinScraper.__init__` 默认值改为 `None`，在构造函数中从 `settings.cookies_path` 读取绝对路径。
+
+#### Bug B5：install_playwright() 重复定义
+
+**现象**：`setup_check.py` 中 `install_playwright()` 定义了两次，第二个覆盖第一个。
+
+**影响**：第一个有 `sys.frozen` 判断（打包环境直接下载），第二个没有，走 subprocess 路径失败。
+
+**修复**：删除第二个定义。
+
+---
+
+### Phase 2：抓取误抓 Bug 修复
+
+#### Bug B1：_extract_dom_to_result() 类型错误（高危）
+
+**问题**：`page.evaluate()` 返回 list，但代码调用 `data.get("images")`，导致该方法永远返回 None。
+
+**修复**：删除错误的 `data.get()` 调用，直接使用已计算的 deduped 列表。
+
+#### Bug B2：兜底返回空结果
+
+**问题**：当所有提取路径失败时返回空 ScrapeResult 而非 None，导致下游误认为成功。
+
+**修复**：改为 `return None`。
+
+#### Bug B3：位置过滤范围过宽
+
+**问题**：`colRight = vpW * 0.65` 过宽，右侧推荐栏封面被误抓。
+
+**修复**：colRight 降到 0.55，URL 排除增加 /aweme/cover/，_extract_via_viewer 增加位置过滤。
+
+---
+
+### Phase 3：主页抓取 API 直调（核心改动）
+
+**背景**：Playwright 抓取主页被 WAF 拦截，`scrape_profile()` 返回空结果。
+
+**发现**：直接 httpx 调用 `/aweme/v1/web/user/profile/other/` 和 `/aweme/v1/web/aweme/post/` API 仅需 cookies 即可成功，无需 a_bogus 签名。
+
+**改动**：
+- `scrape_profile()` 完全重写：去掉 Playwright，改用 httpx 直调 API
+- 新增 sec_uid 提取逻辑：从 `v.douyin.com` 短链接解析出 `sec_uid`，构造 `douyin.com/user/{sec_uid}` URL
+- 支持分页：通过 `max_cursor` + `has_more` 循环获取全部作品
+
+**验证**：
+```
+URL: https://v.douyin.com/vAjDKDovzq8/
+→ sec_uid: MS4wLjABAAAAuLGv9nn8hGijUBf0u1ITnJKu3tSlny25c7SfYdNKf1v9MZWQk5ARN7iR7mEFzwGl
+→ 用户名: (正确) uid=1222261417721327
+→ 作品数: 5（测试 max_posts=5）
+→ 每个作品都有 cover_url 和 share_url
+```
+
+---
+
+### Phase 4：UI 简约化 + 主页批量下载
+
+**UI 改动**：Sidebar 160px、Cards 16px padding、输入框 radius-lg、网格 120px、状态徽章/Toast/按钮收紧、Topbar 缓存按钮 hover 显示、Splash 自动弹登录框。
+
+**批量下载**：新增 POST /api/profile/batch-download API，前端 checkbox + 批量下载 UI，后端逐个调用 scraper + downloader。
+
+---
+
+### 累计改动文件
+
+| 文件 | 改动 |
+|------|------|
+| scraper.py | B4 cookies路径、B1 type error、B2 兜底返回、B3 位置过滤 |
+| setup_check.py | B5 删除重复定义 |
+| router_profile.py | 新增 batch-download 端点 |
+| app.js | 批量下载逻辑 |
+| app.css | UI 简约化 + batch-bar |
+| index.html | 批量操作栏 |
+| base.html | B6 Splash 登录提示 |
+| version.py | VERSION = 1.4.0 |
+| CLAUDE.md | 版本号 + API 列表 |
+| README.md | 更新日志 |
+
+---
+
+## v1.4.1 迭代与发布记录 (2026-06-02)
+
+### 背景
+
+用户继续验证 v1.4.0 后，集中反馈：
+1. 单个链接提取可用，但主页链接提取仍有历史问题
+2. 主页提取只抓到 5 个作品，目标主页应接近 200 个作品
+3. 主页提取后的作品勾选下载全部失败
+4. 桌面窗口不能拖拽缩放、不能最大化、右上角不能直接关闭
+5. 前端视觉略过时，希望保留莫兰迪绿色但更现代，并增加轻微动画
+6. 运行日志需要自动保存，并且 7 天内滚动清理
+7. 对外分发希望只发一个 exe 文件
+
+### 修复：主页链接提取与全量分页
+
+用户提供真实主页复制文本：
+
+```text
+7- 长按复制此条消息，打开抖音搜索，查看TA的更多作品。 https://v.douyin.com/vAjDKDovzq8/ 0@0.com :0pm
+```
+
+问题根因：
+- 分享文本中混有编号、中文提示、邮箱样式干扰文本和时间片段，主页解析必须先稳定提取 URL
+- v1.4.0 的验证只覆盖 `max_posts=5`，没有证明分页逻辑能抓完整主页
+- 主页 API 分页需要持续处理 `has_more` 和 `max_cursor`
+
+修复结果：
+- 主页分享文本支持完整粘贴并自动提取短链
+- 主页抓取继续沿用 httpx 直调 API，不回退到 Playwright WAF 对抗路线
+- 发布检查文档明确：真实主页样例验收标准为 `total >= 200`，不能只用前 5 条冒烟代替全量分页
+
+### 修复：主页批量下载失败
+
+问题根因：
+- v1.4.0 的批量下载在下载阶段逐条重新调用 `scrape(share_url)`
+- 这会让主页批量下载退回慢路径/易失败路径，并且浪费已经由主页 API 返回的直链字段
+
+修复结果：
+- `ProfilePost` 增加并保留 `image_urls`、`video_url`、`music_url`、`music_title`、`live_photo_data`
+- `/api/profile/batch-download` 优先使用主页列表阶段已返回字段
+- 仅当关键字段缺失时才兜底抓详情
+- 下载成功判定改为必须真的生成文件，避免空成功
+- 用户实测勾选下载无问题
+
+### 修复：安装版运行目录权限
+
+用户测试安装包后遇到：
+
+```text
+PermissionError: [Errno 13] Permission denied: 'C:\\Program Files\\Ptu\\ptu_boot.log'
+```
+
+根因：
+- 安装包默认安装到 `C:\Program Files\Ptu`
+- 普通用户没有权限在该目录写运行日志、cookies、下载内容等运行时数据
+- 开发版项目目录可写，所以开发版不暴露该问题
+
+修复结果：
+- 封包版统一使用 `%LOCALAPPDATA%\Ptu` 作为运行时可写目录
+- `ptu_boot.log`、`data/logs`、`cookies.yaml`、downloads、output 都写到用户目录
+- 新增 `tests/test_packaged_runtime_paths.py` 锁定该规则
+
+### 修复：WebView2 误提示
+
+现象：
+- 安装器提示下载 Microsoft Edge WebView2 Runtime
+- 但本机已经存在 `C:\Program Files (x86)\Microsoft\EdgeWebView\...`
+
+根因：
+- `installer.iss` 只检测了 64 位注册表分支，漏掉 WOW6432Node/32 位安装路径
+
+修复：
+- WebView2 检测增加 `HKLM32`、`HKCU32` 和 `{pf32}\Microsoft\EdgeWebView\Application`
+- 已安装 WebView2 的机器不再误提示下载
+
+### 修复：桌面窗口与前端体验
+
+修复内容：
+- pywebview 主窗口恢复 Windows 原生标题栏和边框
+- 明确禁止回退到 `frameless=True`
+- 右上角关闭直接退出应用，不再只能从任务栏关闭
+- 支持拖拽边缘缩放、最大化
+- 前端保持莫兰迪绿色主色，增加更现代的间距、状态、轻微动画
+- 增加 `prefers-reduced-motion` 兼容
+
+### 日志与发布规范
+
+日志：
+- 每次启动生成独立运行日志
+- `data/logs/runs/` 和 `data/logs/exports/` 超过 7 天自动清理
+- 捕获旧代码路径里的 `print()` 输出
+
+发布：
+- 不采用 PyInstaller onefile
+- 采用 PyInstaller onedir 生成 `dist/Ptu/`
+- 再用 Inno Setup 打包为单个安装包 `installer/Ptu_Setup_v1.4.1.exe`
+- 该安装包是对外唯一分发文件
+
+### 验证结果
+
+用户最终测试确认：
+
+```text
+测试完毕，这个版本没有任何问题。我们可以发包了。
+```
+
+本地发布前验证：
+
+```powershell
+python scripts\release_check.py
+python -m pytest tests -q
+python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts
+$env:PTU_NO_PAUSE='1'; cmd /c build_exe.bat
+```
+
+结果：
+- `release_check.py` 通过
+- `pytest`：14 passed
+- `compileall` 通过
+- 安装包生成成功：`installer\Ptu_Setup_v1.4.1.exe`

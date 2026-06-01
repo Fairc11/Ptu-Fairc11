@@ -11,6 +11,26 @@ import subprocess
 from pathlib import Path
 
 
+def _get_runtime_dir() -> Path:
+    if getattr(sys, 'frozen', False):
+        configured = os.environ.get("PTU_RUNTIME_DIR")
+        if configured:
+            return Path(configured)
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "Ptu"
+        return Path.home() / "AppData" / "Local" / "Ptu"
+    return Path(__file__).parent
+
+
+# 封包后 console=False 导致 sys.stdout=None，print() 会崩溃。
+# 改为写入启动日志文件（封包后写到用户可写目录）
+if sys.stdout is None:
+    _log = _get_runtime_dir() / "ptu_boot.log"
+    _log.parent.mkdir(parents=True, exist_ok=True)
+    sys.stdout = open(str(_log), "a", encoding="utf-8")
+
+
 def _print_box(title: str, lines: list[str]):
     """打印带框文字."""
     width = max(len(l) for l in lines) if lines else 40
@@ -206,6 +226,12 @@ def install_playwright():
 
 def check_ffmpeg() -> bool:
     """检查 FFmpeg 是否可用。"""
+    # 封包后优先检查用户可写运行目录，其次检查 exe 同级目录
+    if getattr(sys, 'frozen', False):
+        if (_get_runtime_dir() / "ffmpeg.exe").exists():
+            return True
+        if (Path(sys.executable).parent / "ffmpeg.exe").exists():
+            return True
     # 检查当前目录
     if (Path("ffmpeg.exe")).exists():
         return True
@@ -214,45 +240,6 @@ def check_ffmpeg() -> bool:
     # 检查 PATH
     code, _ = _run_cmd(["ffmpeg", "-version"])
     return code == 0
-
-
-def install_playwright():
-    """自动安装 Playwright Chromium。"""
-    print()
-    _print_box("安装 Chromium 浏览器引擎", [
-        "Ptu 需要 Chromium 来抓取抖音内容",
-        "正在下载（约 150MB），请稍候...",
-        "下载完成后会自动解压安装",
-    ])
-    print()
-
-    try:
-        import playwright
-        pw_dir = Path(playwright.__file__).parent
-        print(f"[*] 正在安装 Chromium headless shell...")
-
-        code, out = _run_cmd(
-            [sys.executable, "-m", "playwright", "install", "chromium-headless-shell"],
-            desc="安装 Chromium"
-        )
-
-        if code == 0:
-            print("[OK] Chromium 安装完成")
-            return True
-        else:
-            print(f"[!] 安装失败: {out[:200]}")
-            print("[*] 尝试备用方法...")
-            # 备用: 直接 pip install playwright 然后重试
-            _run_cmd([sys.executable, "-m", "pip", "install", "playwright"])
-            code2, out2 = _run_cmd([sys.executable, "-m", "playwright", "install", "chromium-headless-shell"])
-            if code2 == 0:
-                print("[OK] Chromium 安装完成")
-                return True
-            print(f"[!] 备用方法也失败: {out2[:200]}")
-            return False
-    except Exception as e:
-        print(f"[!] 安装过程出错: {e}")
-        return False
 
 
 def install_ffmpeg():
@@ -268,11 +255,18 @@ def install_ffmpeg():
     import zipfile
     import io
 
-    # FFmpeg Windows 下载地址
+    # 封包安装到 Program Files 后不可写，下载到用户可写运行目录。
+    if getattr(sys, 'frozen', False):
+        _out_dir = _get_runtime_dir()
+    else:
+        _out_dir = Path(__file__).parent
+    _out_dir.mkdir(parents=True, exist_ok=True)
+    _ffmpeg_path = _out_dir / "ffmpeg.exe"
+
     url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
     try:
-        print("[*] 正在下载 FFmpeg...")
+        print(f"[*] 正在下载 FFmpeg → {_ffmpeg_path}")
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         resp = urllib.request.urlopen(req, timeout=120)
         total = int(resp.headers.get("content-length", 0))
@@ -296,11 +290,10 @@ def install_ffmpeg():
             for name in zf.namelist():
                 if name.endswith("ffmpeg.exe"):
                     with zf.open(name) as f:
-                        with open("ffmpeg.exe", "wb") as out:
-                            out.write(f.read())
+                        _ffmpeg_path.write_bytes(f.read())
                     break
 
-        print("[OK] FFmpeg 安装完成")
+        print(f"[OK] FFmpeg 安装完成: {_ffmpeg_path}")
         return True
     except Exception as e:
         print(f"[!] FFmpeg 下载失败: {e}")

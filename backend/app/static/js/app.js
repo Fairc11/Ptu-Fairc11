@@ -1,5 +1,5 @@
 /**
- * Ptu v1.1.0 - Desktop Application Script
+ * Ptu v1.4.1 - Desktop Application Script
  */
 const Ptu = (() => {
     'use strict';
@@ -15,7 +15,43 @@ const Ptu = (() => {
         // 已登录标志，由 updateLogin 维护
         ws: null,
         loginPollTimer: null,
+        profilePosts: [],
+        profileUserName: '',
     };
+
+    // ── 全局粘贴监听（自动提取 URL 到当前聚焦的输入框） ──────────────
+    document.addEventListener('paste', function(e) {
+        const active = document.activeElement;
+        if (!active || (active.id !== 'url-input' && active.id !== 'profile-url-input')) return;
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (text) {
+            e.preventDefault();
+            active.value = extractUrl(text);
+        }
+    });
+
+    // ── URL 提取（从分享文本中提取抖音链接） ─────────────────────────
+    function extractUrl(text) {
+        if (!text) return '';
+        // 按优先级匹配：主页 > 短链接 > 详情页 > 分享页 > 国际版
+        const patterns = [
+            /https?:\/\/www\.douyin\.com\/user\/[^\s]+/,
+            /https?:\/\/v\.douyin\.com\/[^\s]+/,
+            /https?:\/\/www\.douyin\.com\/(note|video|share)\/[^\s]+/,
+            /https?:\/\/www\.iesdouyin\.com\/[^\s]+/,
+        ];
+        for (const p of patterns) {
+            const m = text.match(p);
+            if (m) return m[0].replace(/[，。；;、)）]+$/g, '');
+        }
+        return text.trim();
+    }
+
+    function setInputValue(input, value) {
+        input.value = value;
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        input.dispatchEvent(new Event('change', {bubbles: true}));
+    }
 
     // ── CDN 代理（绕过防盗链） ─────────────────────────────────────────
     function proxyUrl(url) {
@@ -28,10 +64,19 @@ const Ptu = (() => {
     }
 
     // ── API Client ─────────────────────────────────────────────────────
+    async function _parseError(r) {
+        try {
+            const e = await r.json();
+            return e.detail || e.message || JSON.stringify(e);
+        } catch (_) {
+            const text = await r.text().catch(() => '');
+            return text || `服务器错误 (${r.status})`;
+        }
+    }
     const api = {
         async get(url) {
             const r = await fetch(url);
-            if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || `请求失败 (${r.status})`); }
+            if (!r.ok) { throw new Error(await _parseError(r)); }
             return r.json();
         },
         async post(url, body) {
@@ -40,7 +85,7 @@ const Ptu = (() => {
                 headers: body ? {'Content-Type':'application/json'} : undefined,
                 body: body ? JSON.stringify(body) : undefined,
             });
-            if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || `请求失败 (${r.status})`); }
+            if (!r.ok) { throw new Error(await _parseError(r)); }
             return r.json();
         },
         scrape(url) { return api.post('/api/scrape', {url}); },
@@ -59,7 +104,7 @@ const Ptu = (() => {
 
     // ── Desktop Bridge ─────────────────────────────────────────────────
     const desktop = {
-        isAvailable: state.isDesktop,
+        get isAvailable() { return !!(window.pywebview && window.pywebview.api); },
         _maximized: false,
         minimize() { if (desktop.isAvailable) window.pywebview.api.minimize_window(); },
         maximize() {
@@ -121,7 +166,15 @@ const Ptu = (() => {
             setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 250); }, 3000);
         },
         success(msg) { toast._show(msg, 'success'); },
-        error(msg)   { toast._show(msg, 'error'); },
+        error(msg)   {
+            toast._show(msg, 'error');
+            // 错误信息在日志面板也留一份
+            const logEl = document.getElementById('log-content');
+            if (logEl) {
+                const time = new Date().toLocaleTimeString();
+                logEl.textContent = (logEl.textContent || '') + `\n[${time}] ❌ ${msg}`;
+            }
+        },
         info(msg)    { toast._show(msg, 'info'); },
     };
 
@@ -255,16 +308,6 @@ const Ptu = (() => {
         },
     };
 
-    // ── Tab Switching ──────────────────────────────────────────────────
-    function switchTab(name) {
-        document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-pane').forEach(t => t.classList.remove('active'));
-        const tabBtn = document.querySelector(`.sidebar-tab[data-tab="${name}"]`);
-        const pane = document.getElementById(`tab-${name}`);
-        if (tabBtn) tabBtn.classList.add('active');
-        if (pane) pane.classList.add('active');
-    }
-
     // ── UI Components ──────────────────────────────────────────────────
     const ui = {
         updateLogin(d) {
@@ -283,19 +326,56 @@ const Ptu = (() => {
             }
         },
 
-        pasteUrl() {
-            const input = document.getElementById('url-input');
+        async _pasteToInput(inputId) {
+            const input = document.getElementById(inputId);
             if (!input) return;
-            navigator.clipboard.readText().then(text => {
-                if (text) {
-                    input.value = text;
-                    const m = text.match(/https?:\/\/v\.douyin\.com\/\S+/);
-                    if (m) input.value = m[0];
-                }
-            }).catch(() => {
-                input.focus();
-                document.execCommand('paste');
-            });
+            input.focus();
+            input.select();
+            toast.info('正在读取剪贴板...');
+
+            // 超时辅助
+            const withTimeout = (promise, ms) => {
+                let tid;
+                const timeout = new Promise((_, reject) => {
+                    tid = setTimeout(() => reject(new Error('timeout')), ms);
+                });
+                return Promise.race([promise, timeout]).finally(() => clearTimeout(tid));
+            };
+
+            // 通道1：pywebview 原生桥接（桌面端最可靠）
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.get_clipboard) {
+                try {
+                    const text = await withTimeout(window.pywebview.api.get_clipboard(), 5000);
+                    if (text && text.length > 5) {
+                        setInputValue(input, extractUrl(text));
+                        toast.success('已粘贴');
+                        return;
+                    }
+                } catch (e) { /* fall through */ }
+            }
+
+            // 通道2：浏览器 Clipboard API
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                try {
+                    const text = await withTimeout(navigator.clipboard.readText(), 5000);
+                    if (text && text.length > 5) {
+                        setInputValue(input, extractUrl(text));
+                        toast.success('已粘贴');
+                        return;
+                    }
+                } catch (e) { /* fall through */ }
+            }
+
+            // 都失败
+            toast.info('请按 Ctrl+V 粘贴到输入框');
+        },
+
+        pasteUrl() {
+            ui._pasteToInput('url-input');
+        },
+
+        pasteProfileUrl() {
+            ui._pasteToInput('profile-url-input');
         },
 
         async scrape() {
@@ -584,6 +664,7 @@ const Ptu = (() => {
             if (!input) return;
             const url = input.value.trim();
             if (!url) { toast.error('请输入主页链接'); return; }
+            if (!state.loggedIn) { toast.info('请先登录后再使用'); loginModal.open(); return; }
             const progressSec = document.getElementById('profile-progress');
             const progressMsg = document.getElementById('profile-progress-msg');
             const progressBar = document.getElementById('profile-progress-bar');
@@ -591,7 +672,7 @@ const Ptu = (() => {
             if (progressMsg) progressMsg.textContent = '正在抓取主页...';
             if (progressBar) progressBar.style.width = '20%';
             try {
-                const d = await api.post('/api/profile/scrape', {url, max_posts: 50});
+                const d = await api.post('/api/profile/scrape', {url, max_posts: 500});
                 if (progressBar) progressBar.style.width = '80%';
                 if (progressMsg) progressMsg.textContent = '渲染结果...';
                 // User info
@@ -603,30 +684,115 @@ const Ptu = (() => {
                 if (userName) userName.textContent = d.user_name || '未知用户';
                 if (postCount) postCount.textContent = `共 ${d.total} 个作品`;
                 if (avatar && d.avatar_url) avatar.innerHTML = `<img src="/api/proxy/media?url=${encodeURIComponent(d.avatar_url)}">`;
+                // 保存到 state
+                state.profilePosts = d.posts || [];
+                state.profileUserName = d.user_name || '';
                 // Posts grid
                 const grid = document.getElementById('posts-grid');
                 const postsSec = document.getElementById('profile-posts');
+                const batchBar = document.getElementById('profile-batch-bar');
                 if (postsSec) postsSec.classList.remove('hidden');
-                if (grid) {
-                    grid.innerHTML = '';
-                    (d.posts || []).forEach(p => {
-                        const div = document.createElement('div');
-                        div.className = 'profile-post';
-                        div.innerHTML = `<img src="/api/proxy/media?url=${encodeURIComponent(p.cover_url || '')}" loading="lazy">
-                            <span class="post-type">${p.media_type === 'video' ? '视频' : '图文'}</span>`;
-                        div.onclick = () => {
-                            document.getElementById('url-input').value = p.share_url;
-                            switchTab('single');
-                            setTimeout(() => Ptu.ui.scrape(), 100);
-                        };
-                        grid.appendChild(div);
-                    });
-                }
+                if (batchBar) batchBar.classList.remove('hidden');
+                ui.renderProfileGrid(d.posts || []);
                 if (progressSec) progressSec.classList.add('hidden');
-                toast.success(`抓取完成，共 ${d.total} 个作品`);
+                const totalPosts = (d.posts || []).length;
+                if (totalPosts > 0) {
+                    toast.success(`抓取完成，共 ${totalPosts} 个作品`);
+                } else {
+                    toast.error('未抓取到作品，可能被WAF拦截，请重试或检查链接');
+                }
             } catch (err) {
                 if (progressSec) progressSec.classList.add('hidden');
                 toast.error('抓取失败: ' + err.message);
+            }
+        },
+
+        renderProfileGrid(posts) {
+            const grid = document.getElementById('posts-grid');
+            if (!grid) return;
+            grid.innerHTML = '';
+            if (!posts || posts.length === 0) {
+                grid.innerHTML = '<p class="empty-state">未找到作品，可能主页为空或被拦截</p>';
+                return;
+            }
+            posts.forEach((p, idx) => {
+                const div = document.createElement('div');
+                div.className = 'profile-post';
+                div.dataset.index = idx;
+                div.style.setProperty('--stagger', `${Math.min(idx, 24) * 18}ms`);
+                const hasCover = p.cover_url && p.cover_url.length > 10;
+                const imgSrc = hasCover ? '/api/proxy/media?url=' + encodeURIComponent(p.cover_url) : '';
+                div.innerHTML = `
+                    <input type="checkbox" class="profile-post-check" data-index="${idx}" checked onchange="Ptu.ui.updateProfileSelectCount()">
+                    <img src="${imgSrc}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                    <div class="post-placeholder" style="display:${hasCover?'none':'flex'}">
+                        <span>${p.media_type === 'video' ? '视频' : '图文'}</span>
+                        <span class="post-desc">${(p.desc||'').substring(0,20) || '未知作品'}</span>
+                    </div>
+                    <span class="post-type">${p.media_type === 'video' ? '视频' : '图文'}</span>`;
+                // 点击网格项切换 checkbox（不跳转）
+                div.onclick = (e) => {
+                    if (e.target.tagName === 'INPUT') return;
+                    const cb = div.querySelector('.profile-post-check');
+                    if (cb) { cb.checked = !cb.checked; ui.updateProfileSelectCount(); }
+                };
+                grid.appendChild(div);
+            });
+            ui.updateProfileSelectCount();
+        },
+
+        toggleProfileSelectAll() {
+            const checked = document.getElementById('profile-select-all').checked;
+            document.querySelectorAll('.profile-post-check').forEach(cb => cb.checked = checked);
+            ui.updateProfileSelectCount();
+        },
+
+        updateProfileSelectCount() {
+            const checked = document.querySelectorAll('.profile-post-check:checked').length;
+            const el = document.getElementById('profile-selected-count');
+            if (el) el.textContent = `${checked} 个已选`;
+            const btn = document.getElementById('batch-download-btn');
+            if (btn) btn.disabled = checked === 0;
+        },
+
+        async batchDownload() {
+            const checks = document.querySelectorAll('.profile-post-check:checked');
+            if (!checks.length) { toast.error('请先选择要下载的作品'); return; }
+            const indices = [];
+            checks.forEach(cb => indices.push(parseInt(cb.dataset.index)));
+            const posts = indices.map(i => state.profilePosts[i]).filter(Boolean);
+            if (!posts.length) { toast.error('未找到选中的作品'); return; }
+
+            const btn = document.getElementById('batch-download-btn');
+            if (btn) { btn.disabled = true; btn.textContent = '准备中...'; }
+
+            try {
+                const d = await api.post('/api/profile/batch-download', {
+                    posts: posts.map(p => ({
+                        aweme_id: p.aweme_id,
+                        share_url: p.share_url,
+                        desc: p.desc,
+                        cover_url: p.cover_url,
+                        media_type: p.media_type,
+                        create_time: p.create_time,
+                        image_urls: p.image_urls || [],
+                        video_url: p.video_url || '',
+                        music_url: p.music_url || '',
+                        music_title: p.music_title || '',
+                        live_photo_data: p.live_photo_data || [],
+                    })),
+                    user_name: state.profileUserName || '未知用户',
+                });
+                const ok = d.success || 0;
+                const fail = d.total - ok;
+                toast.success(`批量下载完成: ${ok} 个成功${fail ? ', ' + fail + ' 个失败' : ''}`);
+                if (d.base_dir) {
+                    if (desktop.isAvailable) desktop.openInExplorer(d.base_dir);
+                }
+            } catch (err) {
+                toast.error('批量下载失败: ' + err.message);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '批量下载'; }
             }
         },
 
@@ -636,7 +802,6 @@ const Ptu = (() => {
                 if (d.path) {
                     toast.success('日志已保存: ' + d.path);
                 } else {
-                    // Fallback: browser download
                     const a = document.createElement('a');
                     a.href = '/api/logs/export';
                     a.download = 'ptu.log';
@@ -644,7 +809,6 @@ const Ptu = (() => {
                     toast.success('日志已导出');
                 }
             } catch (err) {
-                // Fallback: try direct download
                 try {
                     const a = document.createElement('a');
                     a.href = '/api/logs/export';
@@ -653,6 +817,30 @@ const Ptu = (() => {
                     toast.success('日志已导出');
                 } catch (e2) {
                     toast.error('导出失败: ' + err.message);
+                }
+            }
+        },
+
+        async showLogFiles() {
+            const section = document.getElementById('log-files-section');
+            const list = document.getElementById('log-files-list');
+            if (!section || !list) return;
+            section.classList.toggle('hidden');
+            if (!section.classList.contains('hidden')) {
+                try {
+                    const d = await api.get('/api/logs/files');
+                    if (d.files && d.files.length > 0) {
+                        list.innerHTML = d.files.map(f =>
+                            `<div class="log-file-item">
+                                <span>${f.date}${f.current ? ' · 当前运行' : ''}</span>
+                                <a class="log-file-size" href="/api/logs/export?file=${encodeURIComponent(f.name)}">${(f.size/1024).toFixed(0)}KB 下载</a>
+                            </div>`
+                        ).join('');
+                    } else {
+                        list.innerHTML = '<div class="log-file-item" style="color:var(--text-tertiary)">暂无历史日志</div>';
+                    }
+                } catch(e) {
+                    list.innerHTML = '<div class="log-file-item" style="color:var(--text-tertiary)">加载失败</div>';
                 }
             }
         },
@@ -682,6 +870,9 @@ const Ptu = (() => {
         const profileInput = document.getElementById('profile-url-input');
         if (profileInput) {
             profileInput.addEventListener('keydown', e => { if (e.key === 'Enter') ui.scrapeProfile(); });
+            profileInput.addEventListener('paste', () => {
+                setTimeout(() => { profileInput.value = extractUrl(profileInput.value); }, 10);
+            });
         }
 
         // Login status click → open login modal
@@ -692,7 +883,7 @@ const Ptu = (() => {
             });
         }
 
-        // History click → re-view cached result
+        // History click → switch to single tab and re-view cached result
         const taskList = document.getElementById('task-list');
         if (taskList) {
             taskList.addEventListener('click', async e => {
@@ -706,8 +897,9 @@ const Ptu = (() => {
                     const task = await api.get('/api/tasks/' + taskId);
                     if (task && task.metadata) {
                         state.currentTaskId = taskId;
+                        // 切换到单链接 tab（结果面板在 single tab 内）
+                        ui.switchTab('single');
                         ui.showResult({task_id: taskId, metadata: task.metadata});
-                        document.getElementById('result-section').scrollIntoView({behavior:'smooth', block:'start'});
                     }
                 } catch (err) {
                     toast.error('无法加载历史记录: ' + err.message);
@@ -747,11 +939,34 @@ const Ptu = (() => {
         init();
     }
 
+    // ── Theme Toggle ──────────────────────────────────────────────
+    function toggleTheme() {
+        const body = document.body;
+        const isDark = body.getAttribute('data-theme') === 'dark';
+        const next = isDark ? 'light' : 'dark';
+        body.setAttribute('data-theme', next);
+        localStorage.setItem('ptu-theme', next);
+        // 更新按钮图标
+        const btn = document.querySelector('.theme-toggle');
+        if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+    }
+
+    // 初始化主题
+    (function initTheme() {
+        const saved = localStorage.getItem('ptu-theme');
+        if (saved === 'dark') {
+            document.body.setAttribute('data-theme', 'dark');
+            const btn = document.querySelector('.theme-toggle');
+            if (btn) btn.textContent = '☀️';
+        }
+    })();
+
     return {
         state,
         api,
         desktop,
         ws,
+        toggleTheme,
         ui: {
             ...ui,
             loginModal,

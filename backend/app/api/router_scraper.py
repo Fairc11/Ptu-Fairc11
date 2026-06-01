@@ -1,11 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from ..models.schemas import ScrapeRequest, ScrapeResponse, TaskStatus
 from ..models.task_store import get_store
-from ..services.scraper import DouyinScraper
+from ..services.scraper import scraper
 
 router = APIRouter(prefix="/api", tags=["scraper"])
-
-scraper = DouyinScraper()
 
 
 @router.post("/scrape", response_model=ScrapeResponse)

@@ -32,7 +32,10 @@ if sys.stdout and sys.stdout.encoding != "utf-8":
     except Exception:
         pass
 
-STATE_FILE = Path(__file__).parent / ".ptu_window_state.json"
+if getattr(sys, 'frozen', False):
+    STATE_FILE = Path(sys.executable).parent / ".ptu_window_state.json"
+else:
+    STATE_FILE = Path(__file__).parent / ".ptu_window_state.json"
 
 
 def _load_window_state() -> dict:
@@ -86,9 +89,17 @@ class DesktopApp:
         cfg.settings.port = self.port
         cfg.settings.host = self.host
         from backend.app.main import app
+
+        # 热重载仅开发模式启用（封包后 reload 会导致频繁重启，破坏 Playwright 会话）
+        is_dev = not getattr(sys, 'frozen', False)
+        base = Path(__file__).parent
+        backend_path = str(base / "backend")
         config = uvicorn.Config(
             app, host=self.host, port=self.port,
-            log_level="warning", reload=False,
+            log_level="warning",
+            reload=is_dev,
+            reload_dirs=[backend_path] if is_dev else None,
+            reload_includes=["*.py", "*.html", "*.css", "*.js"] if is_dev else None,
         )
         server = uvicorn.Server(config)
         self.ready_event.set()
@@ -97,25 +108,17 @@ class DesktopApp:
         except Exception as e:
             print(f"[服务器] 错误: {e}")
 
-    def _on_closing(self):
-        """关闭窗口时保存状态并最小化到托盘，不退出。"""
-        if self.app_exiting:
-            return  # 真正退出，允许关闭
+    def _save_current_window_state(self):
+        """保存窗口位置和尺寸。"""
         try:
             x, y = self.window.x, self.window.y
             w, h = self.window.width, self.window.height
             _save_window_state({
                 "w": w, "h": h, "x": x, "y": y,
-                "maximized": getattr(self.window, "fullscreen", False),
+                "maximized": False,
             })
         except Exception:
             pass
-        # 最小化到托盘
-        try:
-            self.window.hide()
-        except Exception:
-            pass
-        return  # 阻止关闭，只隐藏
 
     def _on_restore(self):
         """从托盘恢复."""
@@ -144,7 +147,7 @@ class DesktopApp:
             return
 
         print(f"[桌面客户端] 服务器就绪 [t={_time.time()-_t0:.2f}s]")
-        server_url = f"http://{self.host}:{self.port}/?desktop=1"
+        server_url = f"http://{self.host}:{self.port}/"
         ws = self.window_state
 
         # 托盘菜单
@@ -174,28 +177,40 @@ class DesktopApp:
             x=ws.get("x"),
             y=ws.get("y"),
             min_size=(860, 580),
-            frameless=True,
-            easy_drag=False,
+            frameless=False,
+            easy_drag=True,
             resizable=True,
             fullscreen=False,
+            maximized=ws.get("maximized", False),
             text_select=True,
-            confirm_close=True,
+            confirm_close=False,
             js_api=self.js_api,
         )
 
         if self.js_api:
             self.js_api.set_window(self.window)
 
+        # 启动时清除 pywebview 静态文件缓存（开发模式）
+        cache_dir = Path.home() / ".ptu"
+        try:
+            import shutil
+            for sub in ["Cache", "Code Cache", "GPUCache"]:
+                p = cache_dir / "Default" / sub
+                if p.exists():
+                    shutil.rmtree(p, ignore_errors=True)
+        except Exception:
+            pass
+
         webview.start(
             debug=False,
             http_server=False,
             private_mode=False,
-            storage_path=str(Path.home() / ".ptu"),
+            storage_path=str(cache_dir),
             menu=tray_menu,
         )
 
         # 窗口关闭后保存状态
-        self._on_closing()
+        self._save_current_window_state()
         print("[桌面客户端] 已退出")
 
 

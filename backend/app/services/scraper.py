@@ -3,20 +3,38 @@ Douyin scraper service using Playwright.
 Fast path: uses direct API when logged in with session cookies.
 """
 from __future__ import annotations
+from dataclasses import dataclass
 import json
 import re
 import asyncio
+import logging
 import yaml
 import httpx
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlencode
 from ..models.schemas import ScrapeResult, MediaType, LivePhotoSource, ProfilePost, ProfileResult
 from .ttwid import ensure_ttwid
+
+logger = logging.getLogger("scraper")
+
+
+@dataclass(frozen=True)
+class ProfileUrlInfo:
+    input_url: str
+    resolved_url: str
+    sec_uid: str
 
 
 class DouyinScraper:
 
-    def __init__(self, cookies_path: str = "cookies.yaml"):
+    def __init__(self, cookies_path: str | None = None):
+        if cookies_path is None:
+            try:
+                from ..config import settings
+                cookies_path = settings.cookies_path
+            except Exception:
+                cookies_path = "cookies.yaml"
         self.cookies: dict[str, str] = {}
         self._cookies_path = cookies_path
         self._load_cookies(cookies_path)
@@ -154,28 +172,35 @@ class DouyinScraper:
         if not aweme_id:
             raise ValueError("无法识别链接，请确认是抖音分享链接")
 
+        import time as _time_scrape
+        _t0 = _time_scrape.time()
+
         # 路径一：直调 API（最快，需要 a_bogus 签名但有时候能走通）
         result = await self._scrape_via_api(aweme_id)
         if result and result.image_urls:
             result.aweme_id = aweme_id
+            print(f"[Scrape] 路径1(API直调) 成功，耗时 {_time_scrape.time()-_t0:.1f}s")
             return result
 
         # 路径一(b)：f2 库直调（含签名处理，可选依赖）
         result = await self._scrape_via_f2(aweme_id)
         if result and result.image_urls:
             result.aweme_id = aweme_id
+            print(f"[Scrape] 路径2(f2库) 成功，耗时 {_time_scrape.time()-_t0:.1f}s")
             return result
 
         # 路径二：Playwright 浏览器内调 API（浏览器自动处理 a_bogus 签名）
         result = await self._scrape_via_pw_api(aweme_id, resolved)
         if result and result.image_urls:
             result.aweme_id = aweme_id
+            print(f"[Scrape] 路径3(PW API) 成功，耗时 {_time_scrape.time()-_t0:.1f}s")
             return result
 
         # 路径三：Playwright DOM 提取（最终兜底）
         result = await self._scrape_via_playwright(resolved if resolved.startswith("http") else share_url)
         if result and (result.image_urls or result.live_photo_data):
             result.aweme_id = aweme_id or ""
+            print(f"[Scrape] 路径4(PW DOM) 成功，耗时 {_time_scrape.time()-_t0:.1f}s")
             return result
 
         raise RuntimeError("抓取失败，无法获取内容数据。")
@@ -194,6 +219,102 @@ class DouyinScraper:
                 return m.group(1)
         return None
 
+    def _extract_first_url(self, text: str) -> str:
+        """Extract the first Douyin URL from pasted share text."""
+        text = (text or "").strip()
+        if not text:
+            return ""
+        patterns = [
+            r"https?://www\.douyin\.com/user/[^\s]+",
+            r"https?://v\.douyin\.com/[^\s]+",
+            r"https?://www\.douyin\.com/(?:note|video|share)/[^\s]+",
+            r"https?://www\.iesdouyin\.com/[^\s]+",
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, text)
+            if m:
+                return m.group(0).rstrip("，。；;、)")
+        return text
+
+    def _extract_profile_sec_uid(self, profile_text: str) -> ProfileUrlInfo:
+        """Resolve a profile/share text to sec_uid, rejecting single-aweme links."""
+        input_url = self._extract_first_url(profile_text)
+        if not input_url:
+            raise ValueError("请输入主页链接")
+
+        if re.search(r"/(?:video|note|share)/\d+", input_url):
+            raise ValueError("这是作品链接，请切换到「单个链接抓取」")
+
+        resolved = self._resolve_url(input_url)
+        if re.search(r"/(?:video|note|share)/\d+", resolved):
+            raise ValueError("这是作品链接，请切换到「单个链接抓取」")
+
+        for candidate in (resolved, input_url):
+            m = re.search(r"[?&]sec_uid=([^&#]+)", candidate)
+            if m:
+                return ProfileUrlInfo(input_url=input_url, resolved_url=resolved, sec_uid=m.group(1))
+            m = re.search(r"/user/([^/?#]+)", candidate)
+            if m:
+                return ProfileUrlInfo(input_url=input_url, resolved_url=resolved, sec_uid=m.group(1))
+
+        raise ValueError("无法从链接中提取用户ID，请确认是主页链接或主页分享文本")
+
+    def _build_profile_api_request(
+        self,
+        endpoint: str,
+        sec_uid: str,
+        *,
+        max_cursor: int | None = None,
+        count: int | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        """Build Douyin profile API URL and headers with browser context params."""
+        cookie_str = "; ".join(f"{k}={v}" for k, v in self.cookies.items() if v)
+        params = {
+            "device_platform": "webapp",
+            "aid": "6383",
+            "channel": "channel_pc_web",
+            "pc_client_type": "1",
+            "publish_video_strategy_type": "2",
+            "pc_libra_divert": "Windows",
+            "version_code": "290100",
+            "version_name": "29.1.0",
+            "cookie_enabled": "true",
+            "screen_width": "1920",
+            "screen_height": "1080",
+            "browser_language": "zh-CN",
+            "browser_platform": "Win32",
+            "browser_name": "Chrome",
+            "browser_version": "130.0.0.0",
+            "browser_online": "true",
+            "engine_name": "Blink",
+            "engine_version": "130.0.0.0",
+            "os_name": "Windows",
+            "os_version": "10",
+            "cpu_core_num": "12",
+            "device_memory": "8",
+            "platform": "PC",
+            "downlink": "10",
+            "effective_type": "4g",
+            "round_trip_time": "100",
+            "sec_user_id": sec_uid,
+        }
+        if self.cookies.get("msToken"):
+            params["msToken"] = self.cookies["msToken"]
+        if max_cursor is not None:
+            params["max_cursor"] = str(max_cursor)
+        if count is not None:
+            params["count"] = str(count)
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            "Referer": "https://www.douyin.com/",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Cookie": cookie_str,
+        }
+        return f"{endpoint}?{urlencode(params)}", headers
+
     def _parse_detail_to_result(self, detail: dict, page_url: str = "") -> Optional[ScrapeResult]:
         if not detail:
             return None
@@ -205,6 +326,7 @@ class DouyinScraper:
             author = detail["user"].get("nickname", "")
         if isinstance(detail.get("owner"), dict):
             author = detail["owner"].get("nickname", "") or author
+        create_time = detail.get("create_time", 0) or 0
         is_video = bool(detail.get("video")) and not detail.get("image_post_info")
         is_video = is_video or "/video/" in page_url
         music_url = ""
@@ -227,8 +349,8 @@ class DouyinScraper:
                 video_url = vlist[0] if vlist else ""
                 return ScrapeResult(title=title, author=author, media_type=MediaType.VIDEO,
                                     image_urls=[cover] if cover else [],
-                                    music_url=video_url or music_url or None, music_title=music_title)
-            return ScrapeResult(title=title, author=author, media_type=MediaType.VIDEO, music_url=music_url or None)
+                                    music_url=video_url or music_url or None, music_title=music_title, create_time=create_time)
+            return ScrapeResult(title=title, author=author, media_type=MediaType.VIDEO, music_url=music_url or None, create_time=create_time)
         img_sources = []
         if detail.get("image_post_info"):
             img_sources = detail["image_post_info"].get("images", [])
@@ -268,13 +390,13 @@ class DouyinScraper:
         if has_any_video and not all_have_video:
             return ScrapeResult(title=title, author=author, media_type=MediaType.COMPREHENSIVE,
                                 image_urls=images, live_photo_data=live_data,
-                                music_url=music_url or None, music_title=music_title)
+                                music_url=music_url or None, music_title=music_title, create_time=create_time)
         if has_any_video:
             return ScrapeResult(title=title, author=author, media_type=MediaType.LIVE_PHOTO,
                                 image_urls=images, live_photo_data=live_data,
-                                music_url=music_url or None, music_title=music_title)
+                                music_url=music_url or None, music_title=music_title, create_time=create_time)
         return ScrapeResult(title=title, author=author, media_type=MediaType.IMAGE_SET,
-                            image_urls=images, music_url=music_url or None, music_title=music_title)
+                            image_urls=images, music_url=music_url or None, music_title=music_title, create_time=create_time)
 
     async def _scrape_via_api(self, aweme_id: str) -> Optional[ScrapeResult]:
         """直调抖音 API（需要 a_bogus 签名，成功率低，设计中快速失败让 f2 接手）"""
@@ -426,7 +548,7 @@ class DouyinScraper:
                     await page.goto(nav_url, wait_until="domcontentloaded", timeout=30000)
                 except Exception as e:
                     if attempt < 2:
-                        print(f"[PW-API] 第{attempt+1}次导航失败，重试...")
+                        logger.error(f"[PW-API] 第{attempt+1}次导航失败，重试...")
                         continue
                     return None
 
@@ -452,7 +574,7 @@ class DouyinScraper:
 
                 if not content_loaded:
                     if attempt < 2:
-                        print(f"[PW-API] 第{attempt+1}次无内容(WAF/超时)，重试...")
+                        logger.error(f"[PW-API] 第{attempt+1}次无内容(WAF/超时)，重试...")
                         await asyncio.sleep(2)
                         continue
                     return None
@@ -470,9 +592,9 @@ class DouyinScraper:
                 break  # 有图片但提取失败 → 不再重试
             except Exception as e:
                 if attempt < 2:
-                    print(f"[PW-API] 第{attempt+1}次异常:{e}，重试...")
+                    logger.error(f"[PW-API] 第{attempt+1}次异常:{e}，重试...")
                     continue
-                print(f"[PW-API] 失败: {e}")
+                logger.error(f"[PW-API] 失败: {e}")
             finally:
                 try:
                     await ctx.close()
@@ -488,13 +610,13 @@ class DouyinScraper:
                 const seen = new Set();
                 const items = [];
                 const vpW = window.innerWidth, vpH = window.innerHeight;
-                const colLeft = vpW * 0.2, colRight = vpW * 0.65;
+                const colLeft = vpW * 0.2, colRight = vpW * 0.55;
                 document.querySelectorAll('img').forEach(img => {
                     let s = img.src || img.getAttribute('data-src') || '';
                     if (!s) { const bg = window.getComputedStyle(img).backgroundImage;
                         if (bg && bg !== 'none') { const m = bg.match(/url\\(["']?([^"')]+)["']?\\)/); if (m) s = m[1]; } }
                     if (!s || !(s.includes('douyinpic.com') || s.includes('tos-cn-'))) return;
-                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo|sticker|expression/.test(s)) return;
+                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo|sticker|expression|aweme\\/cover/.test(s)) return;
                     const nw = img.naturalWidth;
                     if (nw > 0 && nw < 80) return;
                     const base = s.split('?')[0].split('~tplv')[0];
@@ -542,10 +664,6 @@ class DouyinScraper:
                 title = re.sub(r'[#].*', '', (page_title or "")).strip()
             except Exception:
                 title = ""
-            if not data or not data.get("images"):
-                return None
-
-            all_imgs = data["images"][:50]
 
             # 等待一小段时间让懒加载图片加载，再补抓一次
             await asyncio.sleep(1.5)
@@ -553,13 +671,13 @@ class DouyinScraper:
                 const seen = new Set();
                 const items = [];
                 const vpH = window.innerHeight, vpW = window.innerWidth;
-                const colLeft = vpW * 0.2, colRight = vpW * 0.65;
+                const colLeft = vpW * 0.2, colRight = vpW * 0.55;
                 document.querySelectorAll('img').forEach(img => {
                     let s = img.src || img.getAttribute('data-src') || '';
                     if (!s) { const bg = window.getComputedStyle(img).backgroundImage;
                         if (bg && bg !== 'none') { const m = bg.match(/url\\(["']?([^"')]+)["']?\\)/); if (m) s = m[1]; } }
                     if (!s || !(s.includes('douyinpic.com') || s.includes('tos-cn-'))) return;
-                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo|sticker|expression/.test(s)) return;
+                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo|sticker|expression|aweme\\/cover/.test(s)) return;
                     const nw = img.naturalWidth;
                     if (nw > 0 && nw < 80) return;
                     const rect = img.getBoundingClientRect();
@@ -634,7 +752,7 @@ class DouyinScraper:
                                 media_type=MediaType.IMAGE_SET,
                                 image_urls=all_imgs)
         except Exception as e:
-            print(f"[DOM提取] 失败: {e}")
+            logger.error(f"[DOM提取] 失败: {e}")
             return None
 
     async def _scrape_via_playwright(self, url: str) -> Optional[ScrapeResult]:
@@ -651,7 +769,7 @@ class DouyinScraper:
             await ctx.add_init_script(DouyinScraper.ENHANCED_STEALTH)
             try:
                 import yaml as _yaml
-                ck_path = Path("cookies.yaml")
+                ck_path = Path(self._cookies_path)
                 if ck_path.exists():
                     ck_data = _yaml.safe_load(ck_path.read_text("utf-8")) or {}
                     playwright_cookies = []
@@ -775,9 +893,10 @@ class DouyinScraper:
                 }""")
                 if fallback_music:
                     music_url_found = fallback_music
-            return ScrapeResult(media_type=MediaType.IMAGE_SET, music_url=music_url_found or "")
+            # 只在有实际内容时返回结果
+            return None
         except Exception as e:
-            print(f"[Playwright] 失败: {e}")
+            logger.error(f"[Playwright] 失败: {e}")
             return None
         finally:
             try:
@@ -825,9 +944,14 @@ class DouyinScraper:
                 pu = music_data.get("play_url", {})
                 if isinstance(pu, dict):
                     ul = pu.get("url_list", [])
+                    uri = pu.get("uri", "")
                     if ul and ul[0]:
                         music_url = ul[0]
+                    elif uri:
+                        music_url = uri
+                    if music_url:
                         music_title = music_data.get("title", "") or ""
+            create_time = detail.get("create_time", 0) or 0
             if is_video_page:
                 video_data = detail.get("video", {})
                 if isinstance(video_data, dict):
@@ -836,8 +960,8 @@ class DouyinScraper:
                     cover_list = video_data.get("cover", {}).get("url_list", [])
                     cover = cover_list[0] if cover_list else ""
                     return ScrapeResult(title=title, author=author, media_type=MediaType.VIDEO,
-                                        image_urls=[cover] if cover else [], music_url=music_url or None, music_title=music_title)
-                return ScrapeResult(title=title, author=author, media_type=MediaType.VIDEO)
+                                        image_urls=[cover] if cover else [], music_url=music_url or None, music_title=music_title, create_time=create_time)
+                return ScrapeResult(title=title, author=author, media_type=MediaType.VIDEO, create_time=create_time)
 
             img_sources = []
             if detail.get("image_post_info"):
@@ -873,12 +997,12 @@ class DouyinScraper:
             all_have_video = all(lp.video_url for lp in live_data) if live_data else False
             if has_any_video and not all_have_video:
                 return ScrapeResult(title=title, author=author, media_type=MediaType.COMPREHENSIVE,
-                                    image_urls=images, live_photo_data=live_data, music_url=music_url or None, music_title=music_title)
+                                    image_urls=images, live_photo_data=live_data, music_url=music_url or None, music_title=music_title, create_time=create_time)
             if has_any_video:
                 return ScrapeResult(title=title, author=author, media_type=MediaType.LIVE_PHOTO,
-                                    image_urls=images, live_photo_data=live_data, music_url=music_url or None, music_title=music_title)
+                                    image_urls=images, live_photo_data=live_data, music_url=music_url or None, music_title=music_title, create_time=create_time)
             return ScrapeResult(title=title, author=author, media_type=MediaType.IMAGE_SET,
-                                image_urls=images, music_url=music_url or None, music_title=music_title)
+                                image_urls=images, music_url=music_url or None, music_title=music_title, create_time=create_time)
         except Exception:
             return None
 
@@ -907,11 +1031,11 @@ class DouyinScraper:
                 }
                 const found = new Set();
                 const vpW = window.innerWidth, vpH = window.innerHeight;
-                const colLeft = vpW * 0.2, colRight = vpW * 0.65;
+                const colLeft = vpW * 0.2, colRight = vpW * 0.55;
                 document.querySelectorAll('img').forEach(img => {
                     const s = img.src || img.getAttribute('data-src') || '';
                     if (!(s.includes('douyinpic.com') || s.includes('tos-cn-'))) return;
-                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo/.test(s)) return;
+                    if (/emoji|avatar|emblem|douyinDefault|get_app|download|logo|aweme\\/cover/.test(s)) return;
                     const nw = img.naturalWidth;
                     if (nw < 400) return;
                     const rect = img.getBoundingClientRect();
@@ -960,7 +1084,7 @@ class DouyinScraper:
                     }
                 }
                 const vpW = window.innerWidth, vpH = window.innerHeight;
-                const colLeft = vpW * 0.2, colRight = vpW * 0.65;
+                const colLeft = vpW * 0.2, colRight = vpW * 0.55;
                 document.querySelectorAll('img').forEach(img => {
                     let s = getUrl(img);
                     if (!s || /emoji|avatar|emblem|douyinDefault|get_app|download|logo/.test(s)) return;
@@ -1041,7 +1165,7 @@ class DouyinScraper:
             return ScrapeResult(title=title, media_type=media_type, image_urls=[p["image"] for p in live],
                                 live_photo_data=[LivePhotoSource(image_url=p["image"], video_url=p.get("video") or "") for p in live])
         except Exception as e:
-            print(f"[轮播提取] 失败: {e}")
+            logger.error(f"[轮播提取] 失败: {e}")
             return None
 
     async def _extract_via_viewer(self, page, music_url_found=None) -> Optional[ScrapeResult]:
@@ -1065,10 +1189,16 @@ class DouyinScraper:
             async def collect_large():
                 return await page.evaluate("""() => {
                     const seen = new Set(); const results = [];
+                    const vpW = window.innerWidth, vpH = window.innerHeight;
+                    const colLeft = vpW * 0.2, colRight = vpW * 0.55;
                     document.querySelectorAll('img').forEach(img => {
                         const s = img.src || img.getAttribute('data-src') || '';
                         if (!s || !(s.includes('douyinpic.com') || s.includes('tos-cn-'))) return;
+                        if (/aweme\\/cover/.test(s)) return;
                         if (img.naturalWidth < 1000) return;
+                        const rect = img.getBoundingClientRect();
+                        const cx = rect.left + rect.width / 2;
+                        if (cx < colLeft || cx > colRight) return;
                         const base = s.split('?')[0].split('~tplv')[0];
                         if (seen.has(base)) return;
                         seen.add(base);
@@ -1111,7 +1241,7 @@ class DouyinScraper:
                 return None
             return ScrapeResult(media_type=MediaType.IMAGE_SET, image_urls=all_urls, music_url=music_url_found or None)
         except Exception as e:
-            print(f"[Viewer] 失败: {e}")
+            logger.error(f"[Viewer] 失败: {e}")
             return None
 
     async def _extract_from_dom(self, page) -> Optional[ScrapeResult]:
@@ -1147,10 +1277,10 @@ class DouyinScraper:
                 }
                 const imgs = []; const seen = new Set();
                 const vpW = window.innerWidth, vpH = window.innerHeight;
-                const colLeft = vpW * 0.2, colRight = vpW * 0.65;
+                const colLeft = vpW * 0.2, colRight = vpW * 0.55;
                 document.querySelectorAll('img').forEach(img => {
                     let s = getUrl(img);
-                    if (!s || seen.has(s) || /emoji|twemoji|get_app|avatar|emblem|douyinDefault/.test(s)) return;
+                    if (!s || seen.has(s) || /emoji|twemoji|get_app|avatar|emblem|douyinDefault|aweme\\/cover/.test(s)) return;
                     if (!(s.includes('douyinpic.com') || s.includes('tos-cn-'))) return;
                     const nw = img.naturalWidth;
                     if (nw < 400) return;
@@ -1209,7 +1339,7 @@ class DouyinScraper:
                 return ScrapeResult(title=title, media_type=MediaType.IMAGE_SET, image_urls=imgs)
             return None
         except Exception as e:
-            print(f"[DOM提取] 失败: {e}")
+            logger.error(f"[DOM提取] 失败: {e}")
             return None
 
     async def _scrape_via_f2(self, aweme_id: Optional[str]) -> Optional[ScrapeResult]:
@@ -1298,8 +1428,12 @@ class DouyinScraper:
                 pu = music_data.get("play_url", {})
                 if isinstance(pu, dict):
                     ul = pu.get("url_list", [])
+                    uri = pu.get("uri", "")
                     if ul and ul[0]:
                         music_url = ul[0]
+                    elif uri:
+                        music_url = uri
+                    if music_url:
                         music_title = music_data.get("title", "") or ""
 
             # 正文文字（desc 包含标题+正文+#话题）
@@ -1323,11 +1457,11 @@ class DouyinScraper:
                 text_content=text_content,
             )
         except Exception as e:
-            print(f"[f2] 失败: {e}")
+            logger.error(f"[f2] 失败: {e}")
         return None
 
-    async def scrape_profile(self, profile_url: str, max_posts: int = 50) -> ProfileResult:
-        """抓取用户主页所有作品列表。"""
+    async def _find_profile_by_author(self, author_name: str) -> str | None:
+        """通过作者名搜索主页链接。访问抖音搜索页查找。"""
         browser = await self._get_browser()
         ctx = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -1342,109 +1476,222 @@ class DouyinScraper:
             if pw_cookies:
                 await ctx.add_cookies(pw_cookies)
             page = await ctx.new_page()
-
-            # 两步导航：首页→目标页面
+            # 两步导航
             try:
                 await page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=15000)
-                for _ in range(15):
+                for _ in range(10):
                     await asyncio.sleep(1)
                     if 'douyin.com' in page.url and 'mon.zijie' not in page.url:
                         break
             except Exception:
                 pass
-
-            await page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
+            # 搜索作者名
+            search_url = f"https://www.douyin.com/search/{author_name}?type=user"
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
             await asyncio.sleep(3)
-
-            # 等待作品网格加载
-            try:
-                await page.wait_for_function(
-                    '() => document.querySelectorAll(\'[class*="AccountCard"], '
-                    '[class*="PostContainer"], img[class*="avatar"]\').length > 0',
-                    timeout=15000
-                )
-            except Exception:
-                pass
-            await asyncio.sleep(2)
-
-            # 提取用户信息
-            user_info = await page.evaluate("""() => {
-                const nameEl = document.querySelector('[class*="nickname"], [class*="userName"], [class*="username"]');
-                const avatarEl = document.querySelector('[class*="avatar"] img, [class*="Avatar"] img');
-                return {
-                    user_name: nameEl ? nameEl.textContent.trim() : '',
-                    avatar_url: avatarEl ? (avatarEl.src || '') : '',
-                };
+            # 提取第一个用户链接
+            profile_url = await page.evaluate("""() => {
+                const links = document.querySelectorAll('a[href*="/user/"]');
+                for (const a of links) {
+                    const href = a.href || '';
+                    if (href.includes('/user/MS4wLjAB')) return href;
+                    if (href.match(/\\/user\\/[^/]+/)) return href;
+                }
+                return '';
             }""")
-
-            # 滚动加载，收集作品
-            seen_ids = set()
-            posts = []
-            idle_scrolls = 0
-
-            for scroll_round in range(30):  # 最多滚 30 轮
-                # 提取当前页所有可见作品
-                new_posts = await page.evaluate("""() => {
-                    const results = [];
-                    const seenLocal = {};
-                    const links = document.querySelectorAll('a[href*="/note/"], a[href*="/video/"]');
-                    for (let i = 0; i < links.length; i++) {
-                        const link = links[i];
-                        const href = link.href || '';
-                        const m = href.match(/\\/(note|video)\\/(\\d+)/);
-                        if (!m) continue;
-                        const id = m[2];
-                        if (seenLocal[id]) continue;
-                        seenLocal[id] = true;
-                        const img = link.querySelector('img');
-                        const imgSrc = img ? (img.src || img.getAttribute('data-src') || '') : '';
-                        const desc = link.getAttribute('title') || '';
-                        results.push({
-                            aweme_id: id,
-                            cover_url: imgSrc,
-                            desc: desc.trim(),
-                            media_type: m[1] === 'video' ? 'video' : 'image',
-                            share_url: 'https://www.douyin.com/' + m[1] + '/' + id,
-                        });
-                    }
-                    return results;
-                }""")
-
-                for p in new_posts:
-                    if p["aweme_id"] not in seen_ids and len(posts) < max_posts:
-                        seen_ids.add(p["aweme_id"])
-                        posts.append(ProfilePost(**p))
-
-                if len(posts) >= max_posts:
-                    break
-
-                # 滚动加载更多
-                prev_height = await page.evaluate("document.documentElement.scrollHeight")
-                await page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
-                await asyncio.sleep(2)
-                new_height = await page.evaluate("document.documentElement.scrollHeight")
-
-                if new_height == prev_height:
-                    idle_scrolls += 1
-                    if idle_scrolls >= 3:
-                        break
-                else:
-                    idle_scrolls = 0
-
-            return ProfileResult(
-                user_name=user_info.get("user_name", ""),
-                avatar_url=user_info.get("avatar_url", ""),
-                posts=posts,
-                total=len(posts),
-            )
+            return profile_url or None
         except Exception as e:
-            print(f"[Profile] 抓取失败: {e}")
-            raise
+            logger.error(f"[Profile] 搜索作者失败: {e}")
+            return None
         finally:
             try:
                 await ctx.close()
             except Exception:
                 pass
+
+    async def _extract_author_profile_url(self, post_url: str) -> str | None:
+        """从帖子页面提取作者主页链接。"""
+        browser = await self._get_browser()
+        ctx = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            viewport={"width": 1920, "height": 1080},
+        )
+        try:
+            await ctx.add_init_script(DouyinScraper.ENHANCED_STEALTH)
+            pw_cookies = [
+                {"name": k, "value": v, "domain": ".douyin.com", "path": "/"}
+                for k, v in self.cookies.items() if v
+            ]
+            if pw_cookies:
+                await ctx.add_cookies(pw_cookies)
+            page = await ctx.new_page()
+            try:
+                await page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=15000)
+                for _ in range(10):
+                    await asyncio.sleep(1)
+                    if 'douyin.com' in page.url and 'mon.zijie' not in page.url:
+                        break
+            except Exception:
+                pass
+            await page.goto(post_url, wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(3)
+            # 提取作者主页链接
+            url = await page.evaluate("""() => {
+                const links = document.querySelectorAll('a[href*="/user/"]');
+                for (const a of links) {
+                    const href = a.href || '';
+                    if (href.includes('/user/')) return href;
+                }
+                return '';
+            }""")
+            return url or None
+        except Exception:
+            return None
+        finally:
+            try:
+                await ctx.close()
+            except Exception:
+                pass
+
+    async def scrape_profile(self, profile_url: str, max_posts: int = 500) -> ProfileResult:
+        """抓取用户主页所有作品列表。直接调用抖音API（无需Playwright）。"""
+        self._load_cookies(self._cookies_path)
+        parsed = self._extract_profile_sec_uid(profile_url)
+        sec_uid = parsed.sec_uid
+
+        user_name = ""
+        user_id = sec_uid
+        avatar_url = ""
+        posts = []
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+            # 2) 获取用户信息
+            try:
+                profile_url_api, headers = self._build_profile_api_request(
+                    "https://www.douyin.com/aweme/v1/web/user/profile/other/",
+                    sec_uid,
+                )
+                profile_resp = await client.get(
+                    profile_url_api,
+                    headers=headers,
+                )
+                profile_data = profile_resp.json()
+                if not isinstance(profile_data, dict):
+                    raise ValueError("用户信息接口返回格式异常")
+                user = profile_data.get("user", {})
+                user_name = user.get("nickname", "")
+                user_id = str(user.get("uid", sec_uid))
+                avatar_larger = user.get("avatar_larger", {})
+                if isinstance(avatar_larger, dict):
+                    url_list = avatar_larger.get("url_list", [])
+                    avatar_url = url_list[0] if url_list else ""
+                print(f"[Profile] 用户: {user_name} (uid={user_id})")
+            except Exception as e:
+                print(f"[Profile] 获取用户信息失败: {e}")
+
+            # 3) 分页获取作品列表
+            max_cursor = 0
+            has_more = True
+            seen_ids = set()
+            while has_more and len(posts) < max_posts:
+                try:
+                    post_url_api, headers = self._build_profile_api_request(
+                        "https://www.douyin.com/aweme/v1/web/aweme/post/",
+                        sec_uid,
+                        max_cursor=max_cursor,
+                        count=20,
+                    )
+                    post_resp = await client.get(
+                        post_url_api,
+                        headers=headers,
+                    )
+                    post_data = post_resp.json()
+                    if not isinstance(post_data, dict):
+                        raise ValueError("作品列表接口返回格式异常")
+                    if post_data.get("status_code") not in (None, 0):
+                        raise ValueError(post_data.get("status_msg") or "作品列表接口返回错误")
+                    aweme_list = post_data.get("aweme_list", [])
+                    if not aweme_list:
+                        break
+                    for item in aweme_list:
+                        aweme_id = str(item.get("aweme_id", ""))
+                        if not aweme_id or aweme_id in seen_ids:
+                            continue
+                        seen_ids.add(aweme_id)
+                        desc = item.get("desc", "") or ""
+                        has_video = bool(item.get("video"))
+                        has_images = bool(item.get("image_post_info"))
+                        media_type = "image" if has_images else "video"
+                        create_time = item.get("create_time", 0) or 0
+                        cover = ""
+                        video_url = ""
+                        image_urls = []
+                        live_data = []
+                        music_url = ""
+                        music_title = ""
+                        if has_video:
+                            video_data = item.get("video", {}) if isinstance(item.get("video"), dict) else {}
+                            covers = video_data.get("cover", {}).get("url_list", [])
+                            cover = covers[0] if covers else ""
+                            play_urls = video_data.get("play_addr", {}).get("url_list", [])
+                            video_url = play_urls[0] if play_urls else ""
+                        if has_images:
+                            imgs = item.get("image_post_info", {}).get("images", [])
+                            for img in imgs:
+                                if not isinstance(img, dict):
+                                    continue
+                                ul = img.get("url_list", [])
+                                img_url = ul[0] if ul else ""
+                                if not img_url:
+                                    continue
+                                image_urls.append(img_url)
+                                lp_video_url = ""
+                                lp_video = img.get("video")
+                                if isinstance(lp_video, dict):
+                                    lp_play = lp_video.get("play_addr", {}).get("url_list", [])
+                                    lp_video_url = lp_play[0] if lp_play else ""
+                                elif isinstance(img.get("video_url"), str):
+                                    lp_video_url = img["video_url"]
+                                live_data.append(LivePhotoSource(image_url=img_url, video_url=lp_video_url))
+                            if image_urls:
+                                cover = image_urls[0]
+                        music_data = item.get("music", {})
+                        if isinstance(music_data, dict):
+                            play_url = music_data.get("play_url", {})
+                            if isinstance(play_url, dict):
+                                urls = play_url.get("url_list", [])
+                                music_url = urls[0] if urls else ""
+                            music_title = music_data.get("title", "") or ""
+                        post_type = "note" if has_images else "video"
+                        posts.append(ProfilePost(
+                            aweme_id=aweme_id,
+                            desc=desc,
+                            cover_url=cover,
+                            media_type=media_type,
+                            share_url=f"https://www.douyin.com/{post_type}/{aweme_id}",
+                            create_time=create_time,
+                            image_urls=image_urls or ([cover] if cover else []),
+                            video_url=video_url,
+                            music_url=music_url,
+                            music_title=music_title,
+                            live_photo_data=live_data,
+                        ))
+                        if len(posts) >= max_posts:
+                            break
+                    has_more = post_data.get("has_more", False)
+                    max_cursor = post_data.get("max_cursor", 0)
+                except Exception as e:
+                    print(f"[Profile] 获取作品列表失败: {e}")
+                    break
+
+        print(f"[Profile] 共获取 {len(posts)} 个作品")
+        return ProfileResult(
+            user_name=user_name,
+            user_id=user_id,
+            avatar_url=avatar_url,
+            posts=posts,
+            total=len(posts),
+        )
 
 
 # Global scraper instance (shared across routers)

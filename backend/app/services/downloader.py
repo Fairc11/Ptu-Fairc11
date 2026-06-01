@@ -55,20 +55,29 @@ class DownloadManager:
                     f"下载实况 {i+1}/{len(metadata.live_photo_data)}",
                     i, len(metadata.live_photo_data)
                 )
+                img_dl = vid_dl = None
                 if lp.image_url:
                     try:
-                        p = await self._download_file(client, lp.image_url, live_dir, f"live_{i:04d}_img")
-                        if p:
-                            result["images"].append(p)
+                        img_dl = await self._download_file(client, lp.image_url, live_dir, f"live_{i:04d}_img")
+                        if img_dl:
+                            result["images"].append(img_dl)
                     except Exception:
                         pass
                 if lp.video_url:
                     try:
-                        p = await self._download_file(client, lp.video_url, live_dir, f"live_{i:04d}_vid")
-                        if p:
-                            result["live_photo_videos"].append(p)
+                        vid_dl = await self._download_file(client, lp.video_url, live_dir, f"live_{i:04d}_vid")
+                        if vid_dl:
+                            result["live_photo_videos"].append(vid_dl)
                     except Exception:
                         pass
+                # 合成实况照片：视频 + 静态图 → 一个 mp4
+                synth_path = live_dir / f"live_{i:04d}.mp4"
+                if img_dl and vid_dl and not synth_path.exists():
+                    try:
+                        await self._synthesize_live_photo(img_dl, vid_dl, str(synth_path))
+                        result.setdefault("live_photo_synths", []).append(str(synth_path))
+                    except Exception as e:
+                        print(f"实况合成失败 live_{i:04d}: {e}")
             # 下载背景音乐
             if metadata.music_url:
                 await progress_emitter.emit_stage(task_id, "downloading_music", 0.9, "下载背景音乐", 0, 1)
@@ -196,6 +205,37 @@ class DownloadManager:
                 else:
                     raise e
         return None
+
+    async def _synthesize_live_photo(self, image_path: str, video_path: str, output_path: str) -> None:
+        """用 FFmpeg 合成实况照片：视频 + 静态图定格 → 一个 mp4."""
+        import subprocess as sp
+        ffmpeg = settings.ffmpeg_path
+
+        # 视频在前，图片定格 1.5 秒在后，concat 拼接
+        cmd = [
+            ffmpeg, "-y",
+            "-i", video_path,
+            "-loop", "1", "-t", "1.5", "-i", image_path,
+            "-filter_complex",
+            # 统一缩放到偶数尺寸（libx264 要求），保持宽高比
+            "[0:v]setpts=PTS-STARTPTS,scale=trunc(iw/2)*2:trunc(ih/2)*2:force_original_aspect_ratio=1,setsar=1[v0];"
+            "[1:v]setpts=PTS-STARTPTS,scale=trunc(iw/2)*2:trunc(ih/2)*2:force_original_aspect_ratio=1,setsar=1[v1];"
+            "[v0][v1]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-pix_fmt", "yuv420p",
+            "-an",
+            output_path,
+        ]
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: sp.run(cmd, capture_output=True, text=True, timeout=60)
+        )
+        if result.returncode != 0:
+            err = result.stderr.split("\n")[-3:] if result.stderr else ["unknown"]
+            raise RuntimeError("; ".join(err))
 
     def _guess_extension(self, url: str) -> str:
         # zjcdn.com 域名必定是视频

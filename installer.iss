@@ -1,6 +1,6 @@
-; Ptu v1.1.0 - Inno Setup Installer
+; Ptu v1.4.1 - Inno Setup Installer
 #define MyAppName "Ptu"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.4.1"
 #define MyAppPublisher "Ptu"
 #define MyAppExeName "Ptu.exe"
 
@@ -24,15 +24,15 @@ SetupIconFile=icon.ico
 UninstallDisplayName=Ptu v{#MyAppVersion}
 
 [Languages]
-Name: "chinese"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式:"; Flags: checkedbydefault
-Name: "startmenuicon"; Description: "创建开始菜单快捷方式"; GroupDescription: "快捷方式:"; Flags: checkedbydefault
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
+Name: "startmenuicon"; Description: "Create a Start Menu shortcut"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; --onedir 模式：复制整个 dist\Ptu\ 目录（含 _internal\）
+Source: "dist\Ptu\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
@@ -43,7 +43,7 @@ Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: 
 Filename: "{app}\{#MyAppExeName}"; Description: "启动 Ptu"; Flags: postinstall nowait skipifsilent shellexec
 
 [UninstallRun]
-Filename: "taskkill"; Parameters: "/f /im Ptu.exe"; Flags: runhidden
+Filename: "taskkill"; Parameters: "/f /im Ptu.exe"; Flags: runhidden; RunOnceId: "KillPtu"
 
 [Code]
 function IsWebView2Installed: Boolean;
@@ -51,7 +51,12 @@ var
   key: string;
 begin
   key := 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
-  Result := RegKeyExists(HKEY_LOCAL_MACHINE, key) or RegKeyExists(HKEY_CURRENT_USER, key);
+  Result :=
+    RegKeyExists(HKEY_LOCAL_MACHINE, key) or
+    RegKeyExists(HKEY_CURRENT_USER, key) or
+    RegKeyExists(HKLM32, key) or
+    RegKeyExists(HKCU32, key) or
+    DirExists(ExpandConstant('{pf32}\Microsoft\EdgeWebView\Application'));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

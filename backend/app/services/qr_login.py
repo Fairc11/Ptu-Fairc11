@@ -61,46 +61,55 @@ class QRLoginService:
     async def get_qrcode(self) -> dict:
         """获取登录二维码。"""
         # 方式一：直接 API（最可靠，不需要浏览器）
-        try:
-            return await self._get_qrcode_api()
-        except Exception as e:
-            print(f"[QRLogin] API直调失败: {e}")
-
-        # 方式二：Playwright + 系统 Chrome/Edge（打包EXE首选）
-        for channel in ["chrome", "msedge"]:
+        for retry in range(2):
             try:
-                return await self._get_qrcode_pw(channel=channel)
+                return await self._get_qrcode_api()
             except Exception as e:
-                print(f"[QRLogin] {channel} 不可用: {e}")
+                if retry == 0:
+                    print(f"[QRLogin] API直调重试: {e}")
+                    continue
+                print(f"[QRLogin] API直调失败(2次): {e}")
 
-        # 方式三：Playwright + 已安装的 Chromium
+        # 方式二：Playwright + 已安装的 Chromium（setup_check 自动下载）
         exe_path = _find_chromium()
         if exe_path:
             print(f"[QRLogin] 使用已安装 Chromium: {exe_path}")
             return await self._get_qrcode_pw(executable_path=exe_path)
 
-        raise RuntimeError("找不到可用的浏览器，请安装 Chrome 或 Edge")
+        raise RuntimeError("浏览器环境未就绪，请稍后重试（首次启动需下载 Chromium）")
 
     async def _get_qrcode_api(self) -> dict:
         """通过直接API调用获取二维码，完全不需要浏览器。"""
         import httpx
 
-        headers = {"User-Agent": _UA, "Referer": "https://www.douyin.com/"}
+        headers = {
+            "User-Agent": _UA,
+            "Referer": "https://www.douyin.com/",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Sec-Ch-Ua": "\"Chromium\";v=\"130\", \"Google Chrome\";v=\"130\", \"Not?A_Brand\";v=\"99\"",
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": "\"Windows\"",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+        }
 
         # 手动管理 client 生命周期（不退出 async with 保证 cookie 持续可用）
-        self._api_client = httpx.AsyncClient(follow_redirects=True)
+        self._api_client = httpx.AsyncClient(follow_redirects=True, headers=headers)
 
         try:
             # Step 1: 访问 SSO 页面获取初始 Cookie（passport_csrf_token 等）
             await self._api_client.get(
                 "https://sso.douyin.com/get_qrcode/",
-                params=_SSO_PARAMS, headers=headers, timeout=15
+                params=_SSO_PARAMS, headers=headers, timeout=20
             )
 
             # Step 2: 调用二维码 API
             resp = await self._api_client.get(
                 "https://sso.douyin.com/passport/web/get_qrcode/",
-                params=_SSO_PARAMS, headers=headers, timeout=15
+                params=_SSO_PARAMS, headers=headers, timeout=20
             )
 
             data = resp.json()

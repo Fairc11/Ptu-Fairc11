@@ -16,15 +16,19 @@ def _safe_filename(s: str) -> str:
 
 
 def _build_folder_name(task) -> str:
-    """Build folder name: {date}_{author}_{task_id_short}."""
-    date_str = task.created_at.strftime("%Y-%m-%d") if hasattr(task.created_at, 'strftime') else datetime.now().strftime("%Y-%m-%d")
-    # 尝试取作者名，没有则取标题前 20 字
+    """Build folder name: {date}_{title}_{task_id_short}."""
+    # 优先使用作品发布时间，降级用抓取时间
+    if task.metadata and getattr(task.metadata, 'create_time', 0):
+        date_str = datetime.fromtimestamp(task.metadata.create_time).strftime("%Y-%m-%d")
+    else:
+        date_str = task.created_at.strftime("%Y-%m-%d") if hasattr(task.created_at, 'strftime') else datetime.now().strftime("%Y-%m-%d")
+    # 取标题前25字（去掉 #话题），没有则用作者名
     label = ""
     if task.metadata:
-        if task.metadata.author:
+        if task.metadata.title:
+            label = re.sub(r'[#＃]\S*', '', task.metadata.title).strip()[:25]
+        if not label and task.metadata.author:
             label = task.metadata.author
-        elif task.metadata.title:
-            label = re.sub(r'[# ].*', '', task.metadata.title).strip()[:20]
     if not label:
         label = "unknown"
     label = _safe_filename(label)

@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Ptu{% endblock %}</title>
-    <link rel="stylesheet" href="{{ static_url }}/css/app.css">
+    <link rel="stylesheet" href="{{ static_url }}/css/app.css?t={{ cache_buster }}">
     <style>
-        ::selection { background: rgba(129,140,248,0.25); }
+        ::selection { background: rgba(95,125,98,0.22); }
         body { background: var(--bg-app); }
     </style>
 </head>
@@ -33,6 +33,23 @@
         </div>
     </div>
 
+    <!-- Hot Reload: 轮询检测服务器重载 → 自动刷新 -->
+    <script>
+    (function() {
+        var currentId = null;
+        function check() {
+            fetch('/api/build-id')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (currentId === null) { currentId = d.id; return; }
+                    if (currentId !== d.id) { location.reload(true); }
+                })
+                .catch(function() {});
+        }
+        setInterval(check, 1500);
+    })();
+    </script>
+
     <!-- Splash Screen -->
     <div id="splash">
         <div class="splash-logo">P</div>
@@ -49,8 +66,9 @@
                 <span id="app-subtitle">抖音图文 / 视频下载工具</span>
             </div>
             <div id="topbar-right">
+                <button class="theme-toggle" onclick="Ptu.toggleTheme()" title="切换深色/浅色模式">🌙</button>
                 <span id="login-status" class="status-badge status-pending">未登录</span>
-                <button id="logout-btn" class="btn-text" style="display:none">退出</button>
+                <button id="logout-btn" class="btn-text" style="display:none">退出登录</button>
                 <button id="clear-cache-btn" class="btn-text" title="清除浏览器缓存">清理缓存</button>
             </div>
         </header>
@@ -70,13 +88,17 @@
                 <div class="log-toolbar">
                     <span id="log-count" class="log-count">0 条</span>
                     <button class="btn-text btn-xs" onclick="Ptu.ui.exportLogs()">导出</button>
+                    <button class="btn-text btn-xs" onclick="Ptu.ui.showLogFiles()">历史文件</button>
+                </div>
+                <div id="log-files-section" class="log-files-section hidden">
+                    <div id="log-files-list"></div>
                 </div>
                 <pre id="log-content" class="log-content">等待日志...</pre>
             </div>
         </div>
     </div>
 
-    <script src="{{ static_url }}/js/app.js"></script>
+    <script src="{{ static_url }}/js/app.js?t={{ cache_buster }}"></script>
     <script>
     // Splash lifecycle
     (function() {
@@ -96,7 +118,7 @@
                         if (app) app.style.display = 'flex';
                         // 未登录提示（不弹二维码）
                         if (!d.logged_in && typeof Ptu !== 'undefined') {
-                            setTimeout(function() { Ptu.ui.toast.info('未登录，仅限标准模式'); }, 1500);
+                            setTimeout(function() { Ptu.ui.loginModal.open(); }, 800);
                         }
                     }, 500);
                 }, Math.max(0, 1200 - (Date.now() - start)));

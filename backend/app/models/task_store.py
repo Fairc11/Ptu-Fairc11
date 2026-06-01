@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from .schemas import TaskInfo, TaskStatus, ScrapeResult
+from ..version import VERSION
 
 
 class TaskStore:
@@ -30,7 +31,7 @@ class TaskStore:
         self.db_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
 
     def create(self, share_url: str) -> TaskInfo:
-        task = TaskInfo(share_url=share_url)
+        task = TaskInfo(share_url=share_url, app_version=VERSION)
         self._tasks[task.task_id] = task
         self._save()
         return task

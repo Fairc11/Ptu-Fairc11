@@ -46,6 +46,7 @@ class ScrapeResult(BaseModel):
     cover_url: str | None = None
     live_photo_data: list[LivePhotoSource] = []
     aweme_id: str = ""
+    create_time: int = 0               # 作品发布时间（Unix 时间戳）
     raw_data: dict | None = None
     text_content: str = ""             # 正文文字内容（下载时生成 post.txt）
 
@@ -104,6 +105,11 @@ class ProfilePost(BaseModel):
     media_type: str = ""        # "video" | "image"
     share_url: str = ""
     create_time: int = 0
+    image_urls: list[str] = []
+    video_url: str = ""
+    music_url: str = ""
+    music_title: str = ""
+    live_photo_data: list[LivePhotoSource] = []
 
 
 class ProfileResult(BaseModel):

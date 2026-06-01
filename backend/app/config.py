@@ -21,6 +21,19 @@ def _get_base_dir() -> Path:
         return Path(__file__).parent.parent.parent
 
 
+def _get_runtime_dir() -> Path:
+    """Get user-writable runtime data root in packaged mode."""
+    if getattr(sys, 'frozen', False):
+        configured = os.environ.get("PTU_RUNTIME_DIR")
+        if configured:
+            return Path(configured)
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "Ptu"
+        return Path.home() / "AppData" / "Local" / "Ptu"
+    return _get_base_dir()
+
+
 def _find_ffmpeg() -> str:
     """Search for ffmpeg.exe in common locations."""
     # Check PATH first
@@ -28,12 +41,17 @@ def _find_ffmpeg() -> str:
 
     # Common install paths
     search_paths = [
+        _get_runtime_dir(),
+        _get_runtime_dir() / "ffmpeg",
         Path(os.environ.get("LOCALAPPDATA", "")) / "ffmpeg",
         Path(os.environ.get("PROGRAMFILES", "")) / "ffmpeg" / "bin",
         Path(os.environ.get("PROGRAMFILES(X86)", "")) / "ffmpeg" / "bin",
         Path("C:\\ffmpeg\\bin"),
         Path("C:\\tools\\ffmpeg\\bin"),
     ]
+    # In frozen mode, also search alongside the exe
+    if getattr(sys, 'frozen', False):
+        search_paths.insert(0, Path(sys.executable).parent)
 
     for base in search_paths:
         for pattern in ["ffmpeg.exe", "ffmpeg"]:
@@ -71,6 +89,7 @@ class Settings(BaseSettings):
     def load_yaml(cls) -> "Settings":
         s = cls()
         base = _get_base_dir()
+        runtime_base = _get_runtime_dir()
 
         # Search config.yaml in multiple locations
         search_paths = [
@@ -95,14 +114,14 @@ class Settings(BaseSettings):
                 pass
 
         # Resolve relative paths
-        s.data_dir = _resolve_path(s.data_dir, base)
-        s.download_dir = _resolve_path(s.download_dir, base)
-        s.output_dir = _resolve_path(s.output_dir, base)
-        s.tasks_db = _resolve_path(s.tasks_db, base)
-        s.cookies_path = str(_resolve_path(Path(s.cookies_path), base))
+        s.data_dir = _resolve_path(s.data_dir, runtime_base)
+        s.download_dir = _resolve_path(s.download_dir, runtime_base)
+        s.output_dir = _resolve_path(s.output_dir, runtime_base)
+        s.tasks_db = _resolve_path(s.tasks_db, runtime_base)
+        s.cookies_path = str(_resolve_path(Path(s.cookies_path), runtime_base))
 
         # Auto-detect FFmpeg if not found
-        if s.ffmpeg_path == "ffmpeg":
+        if s.ffmpeg_path == "ffmpeg" or not Path(s.ffmpeg_path).exists():
             s.ffmpeg_path = _find_ffmpeg()
 
         return s
