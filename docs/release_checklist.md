@@ -181,7 +181,7 @@ installer\Ptu_Setup_v1.4.2.exe
 - `python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts` -> 通过。
 - `node --check backend\app\static\js\app.js` -> 通过。
 
-注意：本次只是本地出包，用户确认测试完成前不要上传 GitHub Release。
+发布状态：用户确认安装/卸载、扫码登录、主页抓取和下载均正常后，已发布 GitHub Release `v1.4.2`。Release: https://github.com/Fairc11/Ptu-Fairc11/releases/tag/v1.4.2；安装包: https://github.com/Fairc11/Ptu-Fairc11/releases/download/v1.4.2/Ptu_Setup_v1.4.2.exe
 
 ## 9. v1.4.1 实际出包记录（2026-06-02）
 

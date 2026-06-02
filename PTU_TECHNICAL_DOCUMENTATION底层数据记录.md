@@ -2126,4 +2126,4 @@ dist\Ptu\Ptu.exe
 - `dist\Ptu\_internal\backend\.env` 和 `dist\Ptu\_internal\backend\cookies.yaml` 不存在。已确认。
 - 安装器和卸载器常用界面是中文。
 - 卸载清理选择能按预期保留或删除 `%LOCALAPPDATA%\Ptu`、`%LOCALAPPDATA%\ms-playwright`。
-- 用户确认测试完成前，不上传 GitHub Release。
+- 用户确认安装/卸载、扫码登录、主页抓取和下载均正常后，执行 v1.4.2 发布：提交 `14a6b16 fix: release v1.4.2 bundled chromium installer`，推送 `main` 和 tag `v1.4.2`，创建 GitHub Release 并上传 `Ptu_Setup_v1.4.2.exe`。Release: https://github.com/Fairc11/Ptu-Fairc11/releases/tag/v1.4.2；下载: https://github.com/Fairc11/Ptu-Fairc11/releases/download/v1.4.2/Ptu_Setup_v1.4.2.exe；线上资产大小 `325983491` 字节，HTTP HEAD 验证 `200`。

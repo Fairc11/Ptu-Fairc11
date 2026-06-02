@@ -285,7 +285,7 @@ dist\Ptu\Ptu.exe
 - `dist\Ptu\_internal\backend\.env` 和 `dist\Ptu\_internal\backend\cookies.yaml` 不存在。
 - Inno Setup 安装包编译成功，且无未识别消息键警告。
 - 已验证命令：`python -m pytest tests -q` -> `20 passed`；`python scripts\release_check.py` -> 通过；`python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts` -> 通过；`node --check backend\app\static\js\app.js` -> 通过。
-- 当前仅完成本地出包与发布仓库源码同步，用户确认安装包测试前不要上传 GitHub Release。
+- 用户确认安装/卸载、扫码登录、主页抓取和下载均正常后，已发布 GitHub Release `v1.4.2`。Release: https://github.com/Fairc11/Ptu-Fairc11/releases/tag/v1.4.2；安装包: https://github.com/Fairc11/Ptu-Fairc11/releases/download/v1.4.2/Ptu_Setup_v1.4.2.exe
 
 ## v1.4.1 实际打包记录（2026-06-02）
 
