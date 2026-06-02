@@ -259,7 +259,7 @@ scrape(share_url)
 ```text
 installer\Ptu_Setup_v1.4.1.exe
 大小：120.97 MB
-生成时间：2026-06-02 01:49
+生成时间：2026-06-02 17:06
 ```
 
 内部可执行文件为：
@@ -292,4 +292,4 @@ $env:PTU_NO_PAUSE='1'; cmd /c build_exe.bat
 & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" .\installer.iss
 ```
 
-结果：发布检查通过、测试 `12 passed`、编译检查通过、安装包编译成功。尚未在本轮自动执行安装器安装，因为安装会触发系统级安装/UAC 和本机应用状态变更；发布前仍需要按 `docs/release_checklist.md` 做一次手动安装后冒烟。
+结果：发布检查通过、测试 `16 passed`、编译检查通过、安装包编译成功。2026-06-02 17:06 替换构建已修复干净机器首次扫码登录和日志文件夹明显化问题；GitHub Release `v1.4.1` 已在用户确认后替换安装包资产，线上文件大小为 `126848606` 字节。

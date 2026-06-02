@@ -164,7 +164,7 @@ cmd /c build_exe.bat
 ```text
 installer\Ptu_Setup_v1.4.1.exe
 大小：120.97 MB
-生成时间：2026-06-02 01:49
+生成时间：2026-06-02 17:06
 ```
 
 本机 Inno Setup 安装与路径：
@@ -189,7 +189,14 @@ winget install --id JRSoftware.InnoSetup -e --accept-source-agreements --accept-
 
 ```text
 python scripts\release_check.py                         -> 通过
-python -m pytest tests -q                               -> 12 passed
+python -m pytest tests -q                               -> 16 passed
 python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts -> 通过
 Inno Setup 编译 installer.iss                            -> Successful compile
 ```
+
+2026-06-02 17:06 替换构建补充：
+
+- 修复干净机器首次扫码登录的 `headless_shell.exe` 识别问题。
+- 日志集中到 `%LOCALAPPDATA%\Ptu\日志`，运行日志面板新增“打开文件夹”。
+- 新增 `docs/clean_machine_testing.md`、`scripts/clean_runtime_for_smoke.ps1`、`scripts/Ptu_Sandbox_Test.wsb`。
+- GitHub Release `v1.4.1` 已在用户确认后替换安装包资产，线上文件大小为 `126848606` 字节。

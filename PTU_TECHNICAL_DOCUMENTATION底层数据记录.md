@@ -1904,7 +1904,7 @@ $env:PTU_NO_PAUSE='1'; cmd /c build_exe.bat
 
 结果：
 - `release_check.py` 通过
-- `pytest`：14 passed
+- `pytest`：14 passed（首次 v1.4.1 出包时）；2026-06-02 17:06 替换构建验证为 16 passed
 - `compileall` 通过
 - 安装包生成成功：`installer\Ptu_Setup_v1.4.1.exe`
 
@@ -1927,7 +1927,7 @@ $env:PTU_NO_PAUSE='1'; cmd /c build_exe.bat
 - 压缩包内容是安装目录 `Ptu/Ptu.exe + Ptu/_internal/`
 - 包内有 Playwright Python/Node 驱动代码
 - 包内没有真正可启动的 Chromium/Chrome 浏览器实体
-- 包内没有 `ptu_boot.log`、`data/logs/` 或 `%LOCALAPPDATA%\ms-playwright` 内容
+- 包内没有运行日志目录、`ptu_boot.log` 或 `%LOCALAPPDATA%\ms-playwright` 内容
 
 结论：安装目录不是运行日志目录。外部测试要排查封包运行问题时，必须让测试者同时回传：
 
@@ -2031,3 +2031,13 @@ chromium-headless-shell.exe
 ### 注意
 
 `clean_runtime_for_smoke.ps1` 不删除本机数据，只移动到 `%LOCALAPPDATA%\PtuSmokeBackups\`。测试后必须运行 `-RestoreLatest` 恢复开发机原有登录态和 Playwright 缓存。
+
+### 发布结果
+
+2026-06-02 用户确认可以上传后，执行：
+
+- 提交并推送 `main`：`851a6b7 fix: harden v1.4.1 packaged login and logs`
+- 强制更新 tag `v1.4.1` 到 `851a6b7`
+- 删除并重新上传 GitHub Release `v1.4.1` 的 `Ptu_Setup_v1.4.1.exe`
+- 线上下载链接仍为 `https://github.com/Fairc11/Ptu-Fairc11/releases/download/v1.4.1/Ptu_Setup_v1.4.1.exe`
+- 线上资产大小核对为 `126848606` 字节
