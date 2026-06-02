@@ -26,7 +26,7 @@ powershell -ExecutionPolicy Bypass -File scripts\clean_runtime_for_smoke.ps1
 
 然后重新安装/启动 Ptu，重点测试：
 
-- 首次启动是否能下载并识别 Chromium/headless shell
+- 首次启动是否能识别安装包内置的 Chromium/headless shell；即使 `%LOCALAPPDATA%\ms-playwright` 为空，也不应该要求用户手动安装浏览器
 - 扫码登录二维码是否能显示
 - 日志面板的“打开文件夹”是否打开 `%LOCALAPPDATA%\Ptu\日志`
 - `日志/ptu_boot.log`、`日志/ptu.log`、`日志/runs/` 是否生成
@@ -54,7 +54,7 @@ sandbox-out\    -> Sandbox 桌面 PtuSandboxOut
 
 进入 Sandbox 后：
 
-1. 安装器会自动启动；如果没有启动，手动打开桌面 `PtuInstaller\Ptu_Setup_v1.4.1.exe`。
+1. 安装器会自动启动；如果没有启动，手动打开桌面 `PtuInstaller\Ptu_Setup_v1.4.2.exe`。
 2. 安装到默认目录。
 3. 启动 Ptu。
 4. 测试扫码登录二维码。
@@ -69,6 +69,7 @@ sandbox-out\    -> Sandbox 桌面 PtuSandboxOut
 - 应用能启动，窗口能缩放、最大化、右上角关闭。
 - 首次启动没有 `Permission denied: C:\Program Files\Ptu\...`。
 - 扫码登录二维码能显示。
+- 安装器和卸载器常用界面为中文；卸载时能选择是否同时清理 `%LOCALAPPDATA%\Ptu` 和 `%LOCALAPPDATA%\ms-playwright`。
 - 日志文件夹可一键打开，路径是 `%LOCALAPPDATA%\Ptu\日志`。
 - 主页样例能抓到完整作品列表。
 - 勾选 10 个主页作品批量下载，成功数等于选择数。

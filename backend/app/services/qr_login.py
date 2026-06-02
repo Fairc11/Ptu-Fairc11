@@ -24,7 +24,7 @@ def _find_chromium() -> str | None:
             continue
         for item in base.iterdir():
             if item.is_dir() and ("chromium" in item.name.lower() or "chrome" in item.name.lower()):
-                for exe in ["chrome.exe", "chromium.exe", "chromium-headless-shell.exe", "headless_shell.exe"]:
+                for exe in ["chrome-headless-shell.exe", "headless_shell.exe", "chromium-headless-shell.exe", "chrome.exe", "chromium.exe"]:
                     found = list(item.rglob(exe))
                     if found:
                         return str(found[0])
@@ -96,22 +96,27 @@ class QRLoginService:
             "Sec-Fetch-Site": "same-origin",
         }
 
-        # 手动管理 client 生命周期（不退出 async with 保证 cookie 持续可用）
-        self._api_client = httpx.AsyncClient(follow_redirects=True, headers=headers)
+        client = httpx.AsyncClient(follow_redirects=True, headers=headers)
 
         try:
             # Step 1: 访问 SSO 页面获取初始 Cookie（passport_csrf_token 等）
-            await self._api_client.get(
+            await client.get(
                 "https://sso.douyin.com/get_qrcode/",
                 params=_SSO_PARAMS, headers=headers, timeout=20
             )
 
             # Step 2: 调用二维码 API
-            resp = await self._api_client.get(
+            resp = await client.get(
                 "https://sso.douyin.com/passport/web/get_qrcode/",
                 params=_SSO_PARAMS, headers=headers, timeout=20
             )
 
+            content_type = resp.headers.get("content-type", "")
+            if "json" not in content_type.lower():
+                body = resp.text[:120].replace("\n", " ")
+                raise RuntimeError(
+                    f"API返回非JSON: status={resp.status_code}, type={content_type}, body={body}"
+                )
             data = resp.json()
             d = data.get("data", {})
             qr_b64 = d.get("qrcode")
@@ -119,12 +124,17 @@ class QRLoginService:
                 raise RuntimeError(f"API返回异常: {data}")
 
             self._api_token = d.get("token", d.get("secret", ""))
+            if self._api_client:
+                try:
+                    await self._api_client.aclose()
+                except Exception:
+                    pass
+            self._api_client = client
             self._mode = "api"
             print(f"[QRLogin] [OK] 通过API获取二维码成功")
             return {"qrcode": qr_b64, "token": self._api_token or "qr"}
         except Exception:
-            await self._api_client.aclose()
-            self._api_client = None
+            await client.aclose()
             raise
 
     async def _get_qrcode_pw(

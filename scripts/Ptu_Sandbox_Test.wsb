@@ -12,6 +12,6 @@
     </MappedFolder>
   </MappedFolders>
   <LogonCommand>
-    <Command>powershell.exe -NoExit -ExecutionPolicy Bypass -Command "Write-Host 'Ptu clean-machine test sandbox'; Write-Host ''; Write-Host '1. Run installer from Desktop\PtuInstaller'; Write-Host '2. Test QR login, logs folder, profile scrape, batch download'; Write-Host '3. If failed, copy %LOCALAPPDATA%\Ptu\日志 to Desktop\PtuSandboxOut before closing Sandbox'; Write-Host ''; Start-Process 'C:\Users\WDAGUtilityAccount\Desktop\PtuInstaller\Ptu_Setup_v1.4.1.exe'"</Command>
+    <Command>powershell.exe -NoExit -ExecutionPolicy Bypass -Command "Write-Host 'Ptu clean-machine test sandbox'; Write-Host ''; Write-Host '1. Run installer from Desktop\PtuInstaller'; Write-Host '2. Test QR login, logs folder, profile scrape, batch download'; Write-Host '3. If failed, copy %LOCALAPPDATA%\Ptu\日志 to Desktop\PtuSandboxOut before closing Sandbox'; Write-Host ''; Start-Process 'C:\Users\WDAGUtilityAccount\Desktop\PtuInstaller\Ptu_Setup_v1.4.2.exe'"</Command>
   </LogonCommand>
 </Configuration>

@@ -56,13 +56,35 @@ def _run_cmd(cmd: list[str], desc: str = "") -> tuple[int, str]:
         return -3, str(e)
 
 
-def _get_playwright_browsers_dir() -> Path:
-    """获取 Playwright 浏览器安装目录。"""
+def _get_bundled_playwright_browsers_dir() -> Path | None:
+    """Return bundled Playwright browser directory in packaged builds."""
+    if getattr(sys, 'frozen', False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent / "_internal"))
+        bundled = base / "ms-playwright"
+        if bundled.exists():
+            return bundled
+    return None
+
+
+def _get_playwright_browsers_dirs() -> list[Path]:
+    """获取 Playwright 浏览器候选目录，封包后优先使用内置目录。"""
     home = Path.home()
-    # Windows 上 playwright 将浏览器安装在 %USERPROFILE%\AppData\Local\ms-playwright\
-    candidates = [
+    candidates = []
+    bundled = _get_bundled_playwright_browsers_dir()
+    if bundled:
+        candidates.append(bundled)
+    candidates.extend([
         home / "AppData" / "Local" / "ms-playwright",
         home / ".playwright",
+    ])
+    return candidates
+
+
+def _get_playwright_browsers_dir() -> Path:
+    """获取默认 Playwright 浏览器安装目录。"""
+    candidates = [
+        Path.home() / "AppData" / "Local" / "ms-playwright",
+        Path.home() / ".playwright",
     ]
     for c in candidates:
         if c.exists():
@@ -72,16 +94,22 @@ def _get_playwright_browsers_dir() -> Path:
 
 def get_chromium_path() -> str | None:
     """查找已安装的 Playwright Chromium/headless-shell 可执行文件路径。"""
-    browsers_dir = _get_playwright_browsers_dir()
-    if not browsers_dir.exists():
-        return None
-    for item in browsers_dir.iterdir():
-        name = item.name.lower()
-        if item.is_dir() and ("chromium" in name or "chrome" in name):
-            for exe in ["chrome.exe", "chromium.exe", "chromium-headless-shell.exe", "headless_shell.exe"]:
-                found = list(item.rglob(exe))
-                if found:
-                    return str(found[0])
+    for browsers_dir in _get_playwright_browsers_dirs():
+        if not browsers_dir.exists():
+            continue
+        for item in browsers_dir.iterdir():
+            name = item.name.lower()
+            if item.is_dir() and ("chromium" in name or "chrome" in name):
+                for exe in [
+                    "chrome-headless-shell.exe",
+                    "headless_shell.exe",
+                    "chromium-headless-shell.exe",
+                    "chrome.exe",
+                    "chromium.exe",
+                ]:
+                    found = list(item.rglob(exe))
+                    if found:
+                        return str(found[0])
     return None
 
 
@@ -90,18 +118,18 @@ def check_playwright() -> bool:
     return get_chromium_path() is not None
 
 
-def _get_chromium_build_id() -> str | None:
-    """从 Playwright 内部获取 Chromium headless shell 的 build ID。"""
-    # 方式一：通过 playwright 内部 registry
+def _get_chromium_browser_info() -> tuple[str, str] | None:
+    """Return (revision, browser_version) for Chromium headless shell."""
     try:
         from playwright._impl._registry import ALL_BROWSERS
         for b in ALL_BROWSERS:
             name = b.name.lower()
             if "headless" in name and "chromium" in name:
-                return str(b.revision)
+                version = getattr(b, "browser_version", None) or getattr(b, "browserVersion", None)
+                if version:
+                    return str(b.revision), str(version)
     except Exception:
         pass
-    # 方式二：从 browsers.json 读取
     try:
         import json
         import playwright
@@ -111,10 +139,45 @@ def _get_chromium_build_id() -> str | None:
             data = json.loads(bj.read_text("utf-8"))
             for b in data.get("browsers", []):
                 if "headless" in b.get("name", "") and "chromium" in b.get("name", ""):
-                    return str(b["revision"])
+                    return str(b["revision"]), str(b["browserVersion"])
     except Exception:
         pass
     return None
+
+
+def _get_chromium_build_id() -> str | None:
+    """从 Playwright 内部获取 Chromium headless shell 的 build ID。"""
+    info = _get_chromium_browser_info()
+    return info[0] if info else None
+
+
+def _get_chromium_download_urls(browser_version: str, build_id: str) -> list[str]:
+    """Return official Playwright Chromium headless shell download URLs."""
+    host = os.environ.get("PLAYWRIGHT_DOWNLOAD_HOST", "").strip().rstrip("/")
+    if host:
+        return [f"{host}/builds/cft/{browser_version}/win64/chrome-headless-shell-win64.zip"]
+    return [
+        f"https://cdn.playwright.dev/builds/cft/{browser_version}/win64/chrome-headless-shell-win64.zip",
+        # Old URL kept only as a last-resort fallback for older Playwright builds.
+        f"https://playwright.azureedge.net/builds/chromium-headless-shell/{build_id}/chromium-headless-shell-win64.zip",
+    ]
+
+
+def _extract_zip_stripping_root(zf, dest_dir: Path) -> None:
+    """Extract a browser zip while stripping one common top-level directory."""
+    names = [n for n in zf.namelist() if n and not n.endswith("/")]
+    roots = {Path(n).parts[0] for n in names if Path(n).parts}
+    strip_root = len(roots) == 1
+    for name in names:
+        parts = Path(name).parts
+        if strip_root:
+            parts = parts[1:]
+        if not parts:
+            continue
+        out = dest_dir.joinpath(*parts)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(name) as f_in:
+            out.write_bytes(f_in.read())
 
 
 def install_chromium_direct() -> bool:
@@ -123,22 +186,26 @@ def install_chromium_direct() -> bool:
     import zipfile
     import io
 
-    build_id = _get_chromium_build_id()
-    if not build_id:
+    browser_info = _get_chromium_browser_info()
+    if not browser_info:
         print("[!] 无法确定 Chromium 版本号，请手动安装: python -m playwright install chromium-headless-shell")
         return False
+    build_id, browser_version = browser_info
 
     dest_dir = (_get_playwright_browsers_dir()
                 / f"chromium_headless_shell-{build_id}"
                 / "chrome-headless-shell-win64")
-    exe_path = dest_dir / "headless_shell.exe"
+    exe_candidates = [
+        dest_dir / "chrome-headless-shell.exe",
+        dest_dir / "headless_shell.exe",
+    ]
 
-    if exe_path.exists():
+    existing_exe = next((path for path in exe_candidates if path.exists()), None)
+    if existing_exe:
         print("[OK] Chromium 已存在")
         return True
 
-    url = (f"https://playwright.azureedge.net/builds/chromium-headless-shell/"
-           f"{build_id}/chromium-headless-shell-win64.zip")
+    urls = _get_chromium_download_urls(browser_version, build_id)
 
     print()
     _print_box("下载 Chromium 浏览器引擎（约 150MB）", [
@@ -148,37 +215,45 @@ def install_chromium_direct() -> bool:
     print()
 
     try:
-        print(f"[*] 下载: {url}")
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        resp = urllib.request.urlopen(req, timeout=300)
-        total = int(resp.headers.get("content-length", 0))
-        downloaded = 0
-        chunks = []
+        data = None
+        last_error = None
+        for url in urls:
+            try:
+                print(f"[*] 下载: {url}")
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                resp = urllib.request.urlopen(req, timeout=300)
+                total = int(resp.headers.get("content-length", 0))
+                downloaded = 0
+                chunks = []
 
-        while True:
-            chunk = resp.read(8192)
-            if not chunk:
+                while True:
+                    chunk = resp.read(8192)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        pct = downloaded * 100 // total
+                        print(f"\r  下载中... {pct}% ({downloaded//1024//1024}MB"
+                              f"/{total//1024//1024}MB)", end="")
+                data = b"".join(chunks)
                 break
-            chunks.append(chunk)
-            downloaded += len(chunk)
-            if total > 0:
-                pct = downloaded * 100 // total
-                print(f"\r  下载中... {pct}% ({downloaded//1024//1024}MB"
-                      f"/{total//1024//1024}MB)", end="")
+            except Exception as e:
+                last_error = e
+                print(f"\n[!] 下载源失败: {e}")
+
+        if data is None:
+            raise RuntimeError(str(last_error) if last_error else "所有下载源失败")
 
         print("\r  下载完成，正在解压...       ")
-        data = b"".join(chunks)
 
         dest_dir.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            for name in zf.namelist():
-                if name.endswith(".exe") or name.endswith(".dll") or name.endswith(".pak"):
-                    out_name = Path(name).name
-                    if out_name:
-                        with zf.open(name) as f_in:
-                            (dest_dir / out_name).write_bytes(f_in.read())
+            _extract_zip_stripping_root(zf, dest_dir)
 
-        if exe_path.exists():
+        installed_exe = next((path for path in exe_candidates if path.exists()), None)
+        exe_path = installed_exe
+        if exe_path:
             print(f"[OK] Chromium 安装完成: {exe_path}")
             return True
         else:

@@ -2041,3 +2041,89 @@ chromium-headless-shell.exe
 - 删除并重新上传 GitHub Release `v1.4.1` 的 `Ptu_Setup_v1.4.1.exe`
 - 线上下载链接仍为 `https://github.com/Fairc11/Ptu-Fairc11/releases/download/v1.4.1/Ptu_Setup_v1.4.1.exe`
 - 线上资产大小核对为 `126848606` 字节
+
+## v1.4.2 依赖内置、中文安装器与卸载清理 (2026-06-02)
+
+### 背景
+
+朋友测试 v1.4.1 时，日志反复出现：
+
+```text
+[!] 下载失败: HTTP Error 400: Bad Request
+Chromium: [FAIL]
+[QRLogin] API直调失败(2次): Expecting value: line 1 column 1 (char 0)
+```
+
+这说明扫码登录不能只依赖 API 直调。API 在国内网络/接口风控下可能返回非 JSON 或被封禁，仍然需要 Playwright Chromium 兜底拿二维码。原 v1.4.1 把 Chromium 当成首次启动后台下载项，国内网络环境下下载失败后，用户看到的就是二维码空白和“浏览器环境未就绪”。
+
+### 决策
+
+v1.4.2 改为把 Playwright Chromium headless shell 内置进安装包：
+
+```text
+%LOCALAPPDATA%\ms-playwright\chromium_headless_shell-1217
+-> dist\Ptu\_internal\ms-playwright\chromium_headless_shell-1217
+```
+
+封包版查找顺序：
+
+1. `_internal/ms-playwright/` 内置浏览器
+2. `%LOCALAPPDATA%\ms-playwright`
+3. `~\.playwright`
+
+这样用户安装 Ptu 后不需要手动安装 Chromium，也不依赖首次启动访问 Playwright CDN。代价是安装包会明显变大，这是可接受的，因为用户门槛比包体大小更重要。
+
+### 实现
+
+- `build.spec` 把 `%LOCALAPPDATA%\ms-playwright\chromium_headless_shell-1217` 打包到 `ms-playwright/chromium_headless_shell-1217`。
+- `setup_check.py` 新增 `_get_bundled_playwright_browsers_dir()` 和 `_get_playwright_browsers_dirs()`，封包版优先扫描 `_internal/ms-playwright`。
+- `setup_check.py` 和 `qr_login.py` 同时识别 `chrome-headless-shell.exe`、`headless_shell.exe`、`chromium-headless-shell.exe`、`chrome.exe`、`chromium.exe`。
+- `install_chromium_direct()` 的下载 URL 改为官方 Playwright CFT 地址，旧 azureedge 仅作备用；zip 解压保留完整目录结构，并接受官方文件名 `chrome-headless-shell.exe`。
+- `build.spec` 排除 `.env` 和 `cookies.yaml`，避免把开发机 Cookie 或私密配置带进安装包。
+
+### 安装与卸载
+
+用户反馈安装/卸载界面是英文。由于本机 Inno Setup 6.7.3 不自带 `ChineseSimplified.isl`，v1.4.2 不依赖外部语言包，而是在 `installer.iss` 中通过 `[Messages]`、`[CustomMessages]`、`[LangOptions]` 覆盖常用文案。
+
+卸载时新增选择：
+
+- 选择“是”：清理 `%LOCALAPPDATA%\Ptu` 和 `%LOCALAPPDATA%\ms-playwright`，包括日志、Cookie、下载记录、输出文件和浏览器缓存，适合彻底重装。
+- 选择“否”：只卸载程序文件，保留用户运行数据。
+
+### 验证
+
+v1.4.2 发版前必须验证：
+
+```powershell
+python -m pytest tests -q
+python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts
+python scripts\release_check.py
+```
+
+当前源码验证结果：
+
+```text
+tests: 20 passed
+compileall: passed
+release_check.py: passed
+```
+
+本地出包结果：
+
+```text
+installer\Ptu_Setup_v1.4.2.exe
+大小：325,983,491 字节（约 311 MB）
+生成时间：2026-06-02 20:09
+
+dist\Ptu\Ptu.exe
+大小：198,483,518 字节（约 189 MB）
+生成时间：2026-06-02 19:56
+```
+
+安装包生成后还必须检查：
+
+- `dist\Ptu\_internal\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe` 存在。已确认。
+- `dist\Ptu\_internal\backend\.env` 和 `dist\Ptu\_internal\backend\cookies.yaml` 不存在。已确认。
+- 安装器和卸载器常用界面是中文。
+- 卸载清理选择能按预期保留或删除 `%LOCALAPPDATA%\Ptu`、`%LOCALAPPDATA%\ms-playwright`。
+- 用户确认测试完成前，不上传 GitHub Release。

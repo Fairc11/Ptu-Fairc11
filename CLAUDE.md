@@ -1,4 +1,4 @@
-# Ptu - 抖音图文/视频下载工具 v1.4.1
+# Ptu - 抖音图文/视频下载工具 v1.4.2
 
 抖音图文/实况照片/视频抓取+幻灯片视频合成工具。支持用户主页全量抓取。
 
@@ -17,6 +17,15 @@
 - 涉及路径、日志、Cookie、浏览器、FFmpeg、动态 import 的改动，都必须同时考虑开发版和 PyInstaller `sys.frozen` 环境。
 - 用户可见错误必须中文，并且要能帮助判断是链接类型错误、未登录、Cookie 失效、接口空响应还是封包依赖缺失。
 
+## v1.4.2 更新记录
+
+- Chromium/headless shell 从“首次启动时下载”改为随安装包内置：`build.spec` 会把本机 `%LOCALAPPDATA%\ms-playwright\chromium_headless_shell-1217` 打进 `_internal/ms-playwright/`，封包版优先从内置目录查找浏览器，降低国内网络环境下二维码登录失败概率。
+- `setup_check.py` 和 `qr_login.py` 必须同时识别 `chrome-headless-shell.exe`、`headless_shell.exe`、`chromium-headless-shell.exe`、`chrome.exe`、`chromium.exe`；Playwright 官方 headless shell 当前文件名是 `chrome-headless-shell.exe`，不要只写旧的 `headless_shell.exe`。
+- 安装器/卸载器界面改为中文优先：本机 Inno Setup 没有 `ChineseSimplified.isl` 时，通过 `installer.iss` 的 `[Messages]`、`[CustomMessages]` 和 `[LangOptions]` 覆盖常用安装向导文案。
+- 卸载时弹出选择：用户点“是”会同时清理 `%LOCALAPPDATA%\Ptu` 和 `%LOCALAPPDATA%\ms-playwright`，适合彻底重装；点“否”只卸载程序文件，保留日志、下载内容和登录数据。
+- 打包配置继续排除 `.env`、`cookies.yaml` 等开发/登录敏感文件，不能把本机 Cookie 或私密配置带进安装包。
+- 发版前验证从 16 项提升到 `20 passed`，新增覆盖官方 headless shell 文件名、内置 Playwright 浏览器目录优先级和完整 zip 解压结构。
+
 ## v1.4.1 更新记录
 
 - 修复主页分享文本解析：支持类似 `7- 长按复制此条消息... https://v.douyin.com/vAjDKDovzq8/ 0@0.com :0pm` 的完整抖音复制文本；该样例实测应抓到 200+ 作品，不要只用前 5 条冒烟代替全量分页验收。
@@ -28,7 +37,7 @@
 - 完善运行日志：每次启动自动生成独立运行日志，捕获 `print()` 输出；`runs/` 和 `exports/` 日志超过 7 天自动清理。
 - 发布产物改为“单 EXE 安装包”：`build_exe.bat` 先生成稳定的 `dist/Ptu/` onedir，再用 Inno Setup 输出 `installer/Ptu_Setup_v版本号.exe`；不要改成 PyInstaller onefile。
 - 主页输入粘贴按钮加固：pywebview 原生剪贴板优先使用 Win32 API，前端读取延长超时并派发 input/change 事件。
-- 修复干净机器首次扫码登录失败：自动下载的 Chromium headless shell 可执行文件名是 `headless_shell.exe`，浏览器检测必须识别该文件；不能只在已有 `chrome.exe` 的开发机上验收。
+- 修复干净机器首次扫码登录失败：浏览器检测必须覆盖 Playwright headless shell 文件名；不能只在已有 `chrome.exe` 的开发机上验收。
 - 新增 `tests/test_profile_scraper.py` 和 `tests/test_profile_batch_download.py` 锁定主页解析、API 请求构造和批量下载直连字段行为。
 - 新增 `tests/test_setup_check.py` 锁定 Playwright Chromium/headless shell 检测，避免封包后首次启动下载完成但仍提示“浏览器环境未就绪”。
 - 新增 `scripts/release_check.py` 和 `docs/release_checklist.md`，将封包前检查和封包后冒烟流程制度化。
@@ -77,7 +86,7 @@ python run.py --web            # Web模式（浏览器访问 http://127.0.0.1:80
 │       │   └── _internal/
 │       └── Ptu_v1.4.0_YYYYMMDD.zip  # 分发用 ZIP
 ├── installer/
-│   └── Ptu_Setup_v1.4.1.exe      # 对外分发的单 EXE 安装包
+│   └── Ptu_Setup_v1.4.2.exe      # 对外分发的单 EXE 安装包
 ├── backend/
 │   ├── app/
 │   │   ├── main.py        # FastAPI主应用
@@ -217,7 +226,7 @@ scrape(share_url)
 
 - **日志系统**: `backend/app/log_config.py`，开发版写入项目根目录 `日志/`；封包安装版写入 `%LOCALAPPDATA%\Ptu\日志\`，避免 `C:\Program Files\Ptu` 无写入权限。日志包含 `ptu_boot.log`（启动日志）+ `ptu.log`（轮转 5MB×3）+ `runs/ptu_YYYY-MM-DD_HHMMSS.log`（每次运行自动保存）+ `runs/ptu_YYYY-MM-DD.log`（每日汇总）+ `exports/`（手动快照）；runs/exports 超过 7 天自动清理。
 - **外部测试日志位置**: 安装目录 `C:\Program Files\Ptu` 只包含程序文件，通常没有运行日志。让测试者回传问题时，优先让对方点击日志面板里的“打开文件夹”，或直接打包 `%LOCALAPPDATA%\Ptu\日志\` 和 `%LOCALAPPDATA%\ms-playwright\` 的目录清单。
-- **Chromium 首次安装**: 封包版会在后台下载 Playwright Chromium/headless shell。`setup_check.py` 必须同时识别 `chrome.exe`、`chromium.exe`、`chromium-headless-shell.exe`、`headless_shell.exe`；直接下载路径生成的是 `headless_shell.exe`，开发机已有 `chrome.exe` 时不会暴露这个问题。
+- **Chromium 内置与兜底下载**: v1.4.2 起封包版优先使用 `_internal/ms-playwright/` 内置的 Playwright Chromium headless shell，避免用户首次启动时依赖外网下载。`setup_check.py` 必须同时识别 `chrome-headless-shell.exe`、`headless_shell.exe`、`chromium-headless-shell.exe`、`chrome.exe`、`chromium.exe`；开发机已有 `chrome.exe` 时不会暴露干净机器问题。
 - **FFmpeg**：Windows 上使用 `subprocess.run`（`asyncio.create_subprocess_exec` 会失败）
 - **ttwid**：通过 ByteDance 公开接口 `ttwid.bytedance.com/union/register/` 自动获取
 - **打包**：PyInstaller 仍使用 `--onedir` 模式（稳定），输出 `dist/Ptu/Ptu.exe + _internal/`；对外分发使用 Inno Setup 生成单个 `installer/Ptu_Setup_vX.Y.Z.exe` 安装包。
@@ -251,6 +260,32 @@ scrape(share_url)
 | `cookies.yaml` | settings 解析 | 原硬编码 `Path("cookies.yaml")` | ✅ 改用 `self._cookies_path` |
 
 **封包后抓取速度诊断**：`scraper.py` 加计时日志，控制台输出 `[Scrape] 路径X 成功，耗时 X.Xs` → 查看 `%LOCALAPPDATA%\Ptu\日志\ptu.log` 和 `%LOCALAPPDATA%\Ptu\日志\ptu_boot.log` 确认走了哪条路径。路径2（f2库）应 <5s；路径3/4（Playwright）10-30s 正常。如果始终走 Playwright 说明 f2 在封包环境有问题。
+
+## v1.4.2 实际打包记录（2026-06-02）
+
+本次 v1.4.2 已按“PyInstaller onedir + Inno Setup 单 EXE 安装包”路线完成出包，并把 Playwright Chromium headless shell 内置进安装包。最终对外分发文件为：
+
+```text
+installer\Ptu_Setup_v1.4.2.exe
+大小：325,983,491 字节（约 311 MB）
+生成时间：2026-06-02 20:09
+```
+
+内部可执行文件为：
+
+```text
+dist\Ptu\Ptu.exe
+大小：198,483,518 字节（约 189 MB）
+生成时间：2026-06-02 19:56
+```
+
+本次已确认：
+
+- `dist\Ptu\_internal\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe` 存在。
+- `dist\Ptu\_internal\backend\.env` 和 `dist\Ptu\_internal\backend\cookies.yaml` 不存在。
+- Inno Setup 安装包编译成功，且无未识别消息键警告。
+- 已验证命令：`python -m pytest tests -q` -> `20 passed`；`python scripts\release_check.py` -> 通过；`python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts` -> 通过；`node --check backend\app\static\js\app.js` -> 通过。
+- 当前仅完成本地出包与发布仓库源码同步，用户确认安装包测试前不要上传 GitHub Release。
 
 ## v1.4.1 实际打包记录（2026-06-02）
 

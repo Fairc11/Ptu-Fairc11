@@ -16,12 +16,17 @@ root = Path(os.getcwd())
 backend_dir = root / 'backend'
 datas = []
 for f in backend_dir.rglob('*'):
-    if f.is_file() and '__pycache__' not in f.parts and '.pyc' not in f.suffix:
+    if (
+        f.is_file()
+        and '__pycache__' not in f.parts
+        and '.pyc' not in f.suffix
+        and f.name not in ('.env', 'cookies.yaml')
+    ):
         rel = f.relative_to(root)
         datas.append((str(f), str(rel.parent)))
 
 # 收集根目录配置文件
-for f in ['cookies.yaml', 'config.yaml']:
+for f in ['config.yaml']:
     p = root / f
     if p.exists():
         datas.append((str(p), '.'))
@@ -41,6 +46,12 @@ if _f2_spec and _f2_spec.submodule_search_locations:
         for _f in _f2_conf.rglob('*'):
             if _f.is_file() and _f.suffix in ('.yaml', '.yml'):
                 datas.append((str(_f), 'f2/conf'))
+
+# 内置 Playwright Chromium headless shell，避免普通用户首次启动联网下载浏览器。
+_ms_playwright = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'ms-playwright'
+_bundled_shell = _ms_playwright / 'chromium_headless_shell-1217'
+if _bundled_shell.exists():
+    datas.append((str(_bundled_shell), 'ms-playwright/chromium_headless_shell-1217'))
 
 a = Analysis(
     [str(root / 'run.py')],

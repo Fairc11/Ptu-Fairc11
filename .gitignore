@@ -13,6 +13,7 @@ sandbox-out/                    # Windows Sandbox 回传日志
 # ── 构建产物 ──────────────────────────────────
 dist/                           # PyInstaller 打包输出
 build/                          # PyInstaller 构建中间文件
+installer/                      # Inno Setup 安装包输出（作为 GitHub Release 资产上传，不进 git）
 *.spec                          # .spec 已跟踪，排除构建生成的同名文件
 *.pkg                           # PyInstaller 中间包
 *.toc                           # PyInstaller 中间文件
@@ -48,3 +49,5 @@ ptu_error.log
 _exe_*.log
 _exe_*.txt
 login_page*.png
+
+installer/

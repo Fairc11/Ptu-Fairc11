@@ -1,5 +1,5 @@
 /**
- * Ptu v1.4.1 - Desktop Application Script
+ * Ptu v1.4.2 - Desktop Application Script
  */
 const Ptu = (() => {
     'use strict';
