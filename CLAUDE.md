@@ -13,6 +13,7 @@
 - 主页批量下载优先使用主页接口已返回的 `video_url/image_urls/music_url`，不要对每条作品重新走 `scrape(share_url)` 慢路径；只有字段缺失时才兜底抓详情。
 - 桌面壳必须使用 Windows 原生标题栏；不要把主窗口改回 `frameless=True`。无边框窗口会破坏拖拽缩放、最大化和右上角关闭。
 - 开发版通过不等于封包版可发布。封包前必须执行 `python scripts/release_check.py`，封包后必须按 `docs/release_checklist.md` 冒烟。
+- GitHub 上传必须等用户确认测试完成。默认流程是：本机测试通过 -> 干净运行时冒烟 -> Windows Sandbox 测试 -> 用户确认 -> 再 commit/tag/push/Release。
 - 涉及路径、日志、Cookie、浏览器、FFmpeg、动态 import 的改动，都必须同时考虑开发版和 PyInstaller `sys.frozen` 环境。
 - 用户可见错误必须中文，并且要能帮助判断是链接类型错误、未登录、Cookie 失效、接口空响应还是封包依赖缺失。
 
@@ -27,7 +28,9 @@
 - 完善运行日志：每次启动自动生成独立运行日志，捕获 `print()` 输出；`runs/` 和 `exports/` 日志超过 7 天自动清理。
 - 发布产物改为“单 EXE 安装包”：`build_exe.bat` 先生成稳定的 `dist/Ptu/` onedir，再用 Inno Setup 输出 `installer/Ptu_Setup_v版本号.exe`；不要改成 PyInstaller onefile。
 - 主页输入粘贴按钮加固：pywebview 原生剪贴板优先使用 Win32 API，前端读取延长超时并派发 input/change 事件。
+- 修复干净机器首次扫码登录失败：自动下载的 Chromium headless shell 可执行文件名是 `headless_shell.exe`，浏览器检测必须识别该文件；不能只在已有 `chrome.exe` 的开发机上验收。
 - 新增 `tests/test_profile_scraper.py` 和 `tests/test_profile_batch_download.py` 锁定主页解析、API 请求构造和批量下载直连字段行为。
+- 新增 `tests/test_setup_check.py` 锁定 Playwright Chromium/headless shell 检测，避免封包后首次启动下载完成但仍提示“浏览器环境未就绪”。
 - 新增 `scripts/release_check.py` 和 `docs/release_checklist.md`，将封包前检查和封包后冒烟流程制度化。
 
 ## 启动方式
@@ -108,15 +111,16 @@ python run.py --web            # Web模式（浏览器访问 http://127.0.0.1:80
 │   │       └── js/app.js           # 模块化JS（含热重载轮询 + 主题切换 + 粘贴增强）
 │   └── config.yaml
 │   └── cookies.yaml        # 抖音Cookie（扫码登录后自动保存）
+├── 日志/                   # 运行日志（封包版在 %LOCALAPPDATA%\Ptu\日志）
+│   ├── ptu_boot.log        # 启动日志
+│   ├── ptu.log             # 实时日志（轮转，max 5MB×3）
+│   ├── runs/               # 每次运行日志 + 每日汇总（7天自动删除）
+│   │   ├── ptu_2026-06-02_011634.log
+│   │   └── ptu_2026-06-02.log
+│   └── exports/            # 手动导出的日志快照（7天自动删除）
+│       └── ptu_run_20260602_011700.log
 └── data/                   # 运行时生成
     ├── tasks.json          # 任务数据库
-    ├── logs/               # 运行日志
-    │   ├── ptu.log         # 实时日志（轮转，max 5MB×3）
-    │   ├── runs/           # 每次运行日志 + 每日汇总（7天自动删除）
-    │   │   ├── ptu_2026-06-02_011634.log
-    │   │   └── ptu_2026-06-02.log
-    │   └── exports/        # 手动导出的日志快照（7天自动删除）
-    │       └── ptu_run_20260602_011700.log
     ├── downloads/{folder}/
     │   ├── images/         # 图片
     │   ├── music/          # 背景音乐
@@ -160,7 +164,8 @@ python run.py --web            # Web模式（浏览器访问 http://127.0.0.1:80
 | POST | `/api/profile/batch-download` | ⭐批量抓取并下载主页选中作品 |
 | GET | `/api/logs` | ⭐查看最后 N 行运行日志 |
 | GET | `/api/logs/export` | ⭐下载日志文件 |
-| POST | `/api/logs/save` | ⭐保存当前运行日志快照到 data/logs/exports/ 并返回路径 |
+| POST | `/api/logs/save` | ⭐保存当前运行日志快照到 `日志/exports/` 并返回路径 |
+| POST | `/api/logs/open-folder` | ⭐在资源管理器中打开日志文件夹 |
 | GET | `/api/build-id` | 🔧热重载版本号（前端轮询检测变化自动刷新） |
 
 ## 抓取流程（四条路径，按优先级排列）
@@ -196,7 +201,8 @@ scrape(share_url)
 - **视频合成**: FFmpeg合成幻灯片视频（淡入淡出/Ken Burns转场），实况照片可插入视频片段
 - **历史管理**: 支持单个删除和全选批量删除任务记录，点击历史条目可重新查看结果
 - **浏览器缓存清理**: 一键清除 Playwright 缓存和登录状态，退出登录时自动联动清理
-- **运行日志面板**: 左下角可展开的实时日志面板，支持一键导出到 data/logs/
+- **运行日志面板**: 左下角可展开的实时日志面板，支持一键导出和打开 `日志` 文件夹
+- **干净机测试**: `docs/clean_machine_testing.md` 记录标准流程；`scripts/clean_runtime_for_smoke.ps1` 用于本机非破坏式清运行时冒烟；`scripts/Ptu_Sandbox_Test.wsb` 用于 Windows Sandbox 干净机安装测试。
 - **主题**: 莫兰迪绿白 (Morandi Sage Light) 主色调 + macOS Ventura 玻璃风格 + 一键切换深色/浅色模式
 
 ## 技术要点
@@ -209,7 +215,9 @@ scrape(share_url)
 - **桌面端**：pywebview 原生 Windows 标题栏和系统边框；必须支持拖边缩放、最大化和右上角关闭直接退出
 - **窗口位置记忆**：关闭时保存 `x, y, w, h` 到 `.ptu_window_state.json`
 
-- **日志系统**: `backend/app/log_config.py`，开发版写入项目根目录 `data/logs/`；封包安装版写入 `%LOCALAPPDATA%\Ptu\data\logs\`，避免 `C:\Program Files\Ptu` 无写入权限。日志包含 `ptu.log`（轮转 5MB×3）+ `runs/ptu_YYYY-MM-DD_HHMMSS.log`（每次运行自动保存）+ `runs/ptu_YYYY-MM-DD.log`（每日汇总）+ `exports/`（手动快照）；runs/exports 超过 7 天自动清理。
+- **日志系统**: `backend/app/log_config.py`，开发版写入项目根目录 `日志/`；封包安装版写入 `%LOCALAPPDATA%\Ptu\日志\`，避免 `C:\Program Files\Ptu` 无写入权限。日志包含 `ptu_boot.log`（启动日志）+ `ptu.log`（轮转 5MB×3）+ `runs/ptu_YYYY-MM-DD_HHMMSS.log`（每次运行自动保存）+ `runs/ptu_YYYY-MM-DD.log`（每日汇总）+ `exports/`（手动快照）；runs/exports 超过 7 天自动清理。
+- **外部测试日志位置**: 安装目录 `C:\Program Files\Ptu` 只包含程序文件，通常没有运行日志。让测试者回传问题时，优先让对方点击日志面板里的“打开文件夹”，或直接打包 `%LOCALAPPDATA%\Ptu\日志\` 和 `%LOCALAPPDATA%\ms-playwright\` 的目录清单。
+- **Chromium 首次安装**: 封包版会在后台下载 Playwright Chromium/headless shell。`setup_check.py` 必须同时识别 `chrome.exe`、`chromium.exe`、`chromium-headless-shell.exe`、`headless_shell.exe`；直接下载路径生成的是 `headless_shell.exe`，开发机已有 `chrome.exe` 时不会暴露这个问题。
 - **FFmpeg**：Windows 上使用 `subprocess.run`（`asyncio.create_subprocess_exec` 会失败）
 - **ttwid**：通过 ByteDance 公开接口 `ttwid.bytedance.com/union/register/` 自动获取
 - **打包**：PyInstaller 仍使用 `--onedir` 模式（稳定），输出 `dist/Ptu/Ptu.exe + _internal/`；对外分发使用 Inno Setup 生成单个 `installer/Ptu_Setup_vX.Y.Z.exe` 安装包。
@@ -230,19 +238,19 @@ scrape(share_url)
 
 | 差异点 | 开发版 | 封包版 | 已修复 |
 |--------|--------|--------|--------|
-| `sys.stdout` | 控制台可用 | `None`（`print()` 崩溃） | ✅ `setup_check.py` 重定向到 `%LOCALAPPDATA%\Ptu\ptu_boot.log` |
+| `sys.stdout` | 控制台可用 | `None`（`print()` 崩溃） | ✅ `setup_check.py` 重定向到 `%LOCALAPPDATA%\Ptu\日志\ptu_boot.log` |
 | `sys.frozen` | `False` | `True`（`__file__`→`_internal/`） | ✅ 只读资源用 `sys.executable.parent`，可写数据用 `%LOCALAPPDATA%\Ptu` |
 | uvicorn `reload` | `True`（热重载） | **必须 `False`**（否则反复重启杀 Playwright） | ✅ `is_dev` 判断 |
 | SSL 证书 | certifi 自动找到 | 找不到 `cacert.pem` | ✅ 启动设 `SSL_CERT_FILE` |
 | CWD | 项目根 | 用户双击位置 | ✅ `Path("file")` 全部适配 |
-| 安装目录写权限 | 项目目录可写 | `C:\Program Files\Ptu` 普通用户不可写 | ✅ `ptu_boot.log/data/logs/cookies/downloads/output` 写入 `%LOCALAPPDATA%\Ptu` |
+| 安装目录写权限 | 项目目录可写 | `C:\Program Files\Ptu` 普通用户不可写 | ✅ `日志/cookies/downloads/output` 写入 `%LOCALAPPDATA%\Ptu` |
 | Playwright | 系统 Chrome/Edge | 需 `setup_check` 下载 Chromium | ✅ 首次启动后台下载 |
 | FFmpeg | config.yaml 路径 | 同上 | ✅ 下载到 exe 同级目录 |
 | f2 库 Bark | 可能超时 60s+ | 同开发版 | ✅ `enable_bark=False` |
 | 窗口缩放/关闭 | 原生窗口可缩放和关闭 | `frameless=True` 会锁死拖边缩放，关闭按钮可能只隐藏到托盘 | ✅ `frameless=False` + `confirm_close=False` |
 | `cookies.yaml` | settings 解析 | 原硬编码 `Path("cookies.yaml")` | ✅ 改用 `self._cookies_path` |
 
-**封包后抓取速度诊断**：`scraper.py` 加计时日志，控制台输出 `[Scrape] 路径X 成功，耗时 X.Xs` → 查看 `%LOCALAPPDATA%\Ptu\ptu_boot.log` 确认走了哪条路径。路径2（f2库）应 <5s；路径3/4（Playwright）10-30s 正常。如果始终走 Playwright 说明 f2 在封包环境有问题。
+**封包后抓取速度诊断**：`scraper.py` 加计时日志，控制台输出 `[Scrape] 路径X 成功，耗时 X.Xs` → 查看 `%LOCALAPPDATA%\Ptu\日志\ptu.log` 和 `%LOCALAPPDATA%\Ptu\日志\ptu_boot.log` 确认走了哪条路径。路径2（f2库）应 <5s；路径3/4（Playwright）10-30s 正常。如果始终走 Playwright 说明 f2 在封包环境有问题。
 
 ## v1.4.1 实际打包记录（2026-06-02）
 
@@ -271,7 +279,7 @@ dist\Ptu\Ptu.exe
 - `[Tasks]` 不要使用 Inno 不支持的 `checkedbydefault` flag；默认任务无需额外 flag。
 - `[UninstallRun]` 的 `taskkill` 需要带 `RunOnceId: "KillPtu"`，避免 Inno 编译警告。
 - 自动化打包可使用 `$env:PTU_NO_PAUSE='1'; cmd /c build_exe.bat`，避免批处理结束时停在 `pause`。
-- v1.4.1 首次安装到 `C:\Program Files\Ptu` 后曾出现 `PermissionError: [Errno 13] Permission denied: 'C:\\Program Files\\Ptu\\ptu_boot.log'`；根因是封包后把启动日志/运行数据写进安装目录。已改为封包版统一写入 `%LOCALAPPDATA%\Ptu`。
+- v1.4.1 首次安装到 `C:\Program Files\Ptu` 后曾出现 `PermissionError: [Errno 13] Permission denied: 'C:\\Program Files\\Ptu\\ptu_boot.log'`；根因是封包后把启动日志/运行数据写进安装目录。已改为封包版统一写入 `%LOCALAPPDATA%\Ptu`，日志集中放在 `%LOCALAPPDATA%\Ptu\日志`。
 - WebView2 检测必须包含 32 位注册表分支和 `Program Files (x86)\Microsoft\EdgeWebView` 目录；否则已安装 WebView2 的机器也可能被误提示下载。
 
 本次已验证命令：

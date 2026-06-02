@@ -37,10 +37,10 @@ def test_packaged_log_paths_use_local_app_data(tmp_path, monkeypatch):
         log_config = importlib.reload(log_config)
 
         expected_root = tmp_path / "LocalAppData" / "Ptu"
-        assert log_config.LOG_DIR == expected_root / "data" / "logs"
-        assert log_config.RUNS_DIR == expected_root / "data" / "logs" / "runs"
-        assert log_config.EXPORTS_DIR == expected_root / "data" / "logs" / "exports"
-        assert log_config.get_boot_log_path() == expected_root / "ptu_boot.log"
+        assert log_config.LOG_DIR == expected_root / "日志"
+        assert log_config.RUNS_DIR == expected_root / "日志" / "runs"
+        assert log_config.EXPORTS_DIR == expected_root / "日志" / "exports"
+        assert log_config.get_boot_log_path() == expected_root / "日志" / "ptu_boot.log"
     finally:
         monkeypatch.setattr(sys, "frozen", False, raising=False)
         importlib.reload(log_config)

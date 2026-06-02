@@ -27,6 +27,12 @@ if _frozen:
 from backend.app.version import VERSION
 
 
+def _get_boot_log_dir() -> Path:
+    if getattr(sys, 'frozen', False):
+        return Path(os.environ["PTU_RUNTIME_DIR"]) / "日志"
+    return Path(__file__).parent / "日志"
+
+
 def _kill_port(port: int):
     try:
         output = subprocess.check_output(
@@ -47,7 +53,7 @@ def main():
     _start_ts = __import__('time').time()
     # 启动日志文件（无论 console 与否都记录）
     # 封包安装到 Program Files 后不可写，运行时日志必须放到用户目录。
-    _log_dir = Path(os.environ["PTU_RUNTIME_DIR"]) if getattr(sys, 'frozen', False) else Path(__file__).parent
+    _log_dir = _get_boot_log_dir()
     _log_dir.mkdir(parents=True, exist_ok=True)
     _log_f = open(str(_log_dir / "ptu_boot.log"), "a", encoding="utf-8")
     def _log(msg):
@@ -99,7 +105,7 @@ if __name__ == "__main__":
     except Exception as _e:
         import traceback
         try:
-            _err_dir = Path(os.environ.get("PTU_RUNTIME_DIR", "")) if getattr(sys, 'frozen', False) else Path(__file__).parent
+            _err_dir = _get_boot_log_dir()
             _err_dir.mkdir(parents=True, exist_ok=True)
             _err_log = _err_dir / "ptu_error.log"
             with open(str(_err_log), "w", encoding="utf-8") as _f:

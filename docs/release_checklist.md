@@ -74,6 +74,7 @@ asyncio.run(main())
 - 确认新增的动态/条件 import 已加入 `build.spec` 的 `hiddenimports`。
 - 确认第三方配置、证书、模板、静态文件已加入 `datas`。
 - 确认 `desktop_app.py` 使用原生窗口：`frameless=False`、`confirm_close=False`。主窗口必须能拖边缩放、最大化，并且右上角关闭直接退出。
+- 确认 Chromium 首次安装路径被测试覆盖：`setup_check.get_chromium_path()` 必须能识别 `headless_shell.exe`，不能只识别开发机已有的 `chrome.exe`。
 - 不要在 `build.spec` 排除不确定依赖；尤其不要排除 `cryptography`。
 
 ## 4. 封包流程
@@ -105,18 +106,51 @@ https://jrsoftware.org/isdl.php
 - 双击 `dist\Ptu\Ptu.exe`。
 - 确认窗口能打开，能拖动边缘改变宽高，最大化按钮可用，右上角 X 能直接关闭应用。
 - 再次打开应用，确认右上角登录状态正常。
-- 打开运行日志面板，确认 `%LOCALAPPDATA%\Ptu\data\logs\runs\` 生成本次运行日志；点击导出后确认 `%LOCALAPPDATA%\Ptu\data\logs\exports\` 生成快照。runs/exports 只保留 7 天内日志。
+- 用干净依赖环境验收一次扫码登录：临时移动或重命名 `%LOCALAPPDATA%\ms-playwright` 后启动封包版，等待 Chromium/headless shell 下载完成，再点击登录刷新二维码；不能出现“浏览器环境未就绪”。
+- 打开运行日志面板，确认 `%LOCALAPPDATA%\Ptu\日志\runs\` 生成本次运行日志；点击“打开文件夹”后确认资源管理器打开 `%LOCALAPPDATA%\Ptu\日志`；点击导出后确认 `%LOCALAPPDATA%\Ptu\日志\exports\` 生成快照。runs/exports 只保留 7 天内日志。
 - 扫码登录后抓取一个单作品链接。
 - 在主页抓取页点击粘贴按钮，确认能读取剪贴板完整分享文本。
 - 抓取主页样例，确认能显示用户信息和作品网格。
 - 勾选 10 个主页作品批量下载，确认成功数等于选择数，并生成下载目录。
-- 检查 `%LOCALAPPDATA%\Ptu\ptu_boot.log` 和 `%LOCALAPPDATA%\Ptu\data\logs\ptu.log`，不能有启动崩溃、导入失败、cookies 路径错位、`Permission denied: C:\Program Files\Ptu\...`。
+- 检查 `%LOCALAPPDATA%\Ptu\日志\ptu_boot.log` 和 `%LOCALAPPDATA%\Ptu\日志\ptu.log`，不能有启动崩溃、导入失败、cookies 路径错位、`Permission denied: C:\Program Files\Ptu\...`。
+- 外部测试回传问题时，不要只让对方压缩安装目录。让对方点击日志面板里的“打开文件夹”，打包 `%LOCALAPPDATA%\Ptu\日志\`；如涉及扫码登录，再附上 `%LOCALAPPDATA%\ms-playwright\` 是否存在浏览器可执行文件的目录清单。
 
-## 6. 归档
+## 6. 干净机测试
+
+开发机冒烟通过后，必须按 `docs/clean_machine_testing.md` 继续做干净环境验证。
+
+本机清运行时冒烟：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\clean_runtime_for_smoke.ps1
+```
+
+验收完成后恢复：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\clean_runtime_for_smoke.ps1 -RestoreLatest
+```
+
+Windows Sandbox 测试：
+
+```text
+双击 scripts\Ptu_Sandbox_Test.wsb
+```
+
+验收重点：
+
+- 默认安装路径 `C:\Program Files\Ptu` 权限正常。
+- 首次启动没有任何开发机缓存，扫码二维码仍能显示。
+- 日志面板“打开文件夹”能打开 `%LOCALAPPDATA%\Ptu\日志`。
+- 主页抓取和 10 个作品批量下载通过。
+
+用户未确认前，不要上传 GitHub Release，不要替换线上资产。
+
+## 7. 归档
 
 把 `installer\Ptu_Setup_v<version>.exe` 复制到 `releases/<version>/`。旧版本保留，不覆盖。
 
-## 7. v1.4.1 实际出包记录（2026-06-02）
+## 8. v1.4.1 实际出包记录（2026-06-02）
 
 本次 v1.4.1 已完整跑通出包链路：
 
@@ -149,6 +183,7 @@ winget install --id JRSoftware.InnoSetup -e --accept-source-agreements --accept-
 - 这次没有自动执行安装器安装；正式分发前仍需人工双击 `installer\Ptu_Setup_v1.4.1.exe`，完成安装后按第 5 节做冒烟测试。
 - 如果安装到 `C:\Program Files\Ptu` 后启动报 `PermissionError: [Errno 13] Permission denied: 'C:\\Program Files\\Ptu\\ptu_boot.log'`，说明运行时数据又写回了安装目录；封包版必须写入 `%LOCALAPPDATA%\Ptu`。
 - 如果安装器提示下载 WebView2，但本机 `C:\Program Files (x86)\Microsoft\EdgeWebView\` 已存在，说明 WebView2 检测漏了 32 位注册表/WOW6432Node 分支。
+- 如果扫码登录二维码空白并提示“浏览器环境未就绪”，先检查 `%LOCALAPPDATA%\ms-playwright`。直接下载的 headless shell 文件名是 `headless_shell.exe`，`setup_check.py` 和 `qr_login.py` 都必须识别它；这类问题不能只在已有 Playwright `chrome.exe` 的开发机上复现。
 
 本次验证结果：
 

@@ -186,7 +186,7 @@ async def get_logs(lines: int = 100):
 
 @app.get("/api/logs/files")
 async def list_log_files():
-    """列出 data/logs/runs/ 下自动保存的运行日志。"""
+    """列出 日志/runs/ 下自动保存的运行日志。"""
     from .log_config import RUNS_DIR, get_current_run_log
     files = []
     current = get_current_run_log()
@@ -226,7 +226,7 @@ async def export_logs(file: str | None = None):
 
 @app.post("/api/logs/save")
 async def save_logs():
-    """保存当前运行日志快照到 data/logs/exports/，返回路径。"""
+    """保存当前运行日志快照到日志/exports/，返回路径。"""
     from .log_config import LOG_DIR, EXPORTS_DIR, get_current_run_log
     import shutil, datetime
     log_file = get_current_run_log()
@@ -241,6 +241,24 @@ async def save_logs():
     export_path = EXPORTS_DIR / export_name
     shutil.copy2(str(log_file), str(export_path))
     return {"status": "ok", "path": str(export_path), "filename": export_name}
+
+
+@app.post("/api/logs/open-folder")
+async def open_logs_folder():
+    """Open the user-facing log folder in Explorer."""
+    from .log_config import LOG_DIR
+    import os
+    import subprocess
+    import sys
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    if sys.platform.startswith("win"):
+        os.startfile(str(LOG_DIR))
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(LOG_DIR)])
+    else:
+        subprocess.Popen(["xdg-open", str(LOG_DIR)])
+    return {"status": "ok", "path": str(LOG_DIR)}
 
 
 @app.get("/api/build-id")

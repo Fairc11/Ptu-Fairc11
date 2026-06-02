@@ -2,10 +2,11 @@
 Centralized logging configuration for Ptu.
 
 Logs to:
-  - data/logs/ptu.log (rotating, max 5MB, keep 3 backups — for log panel)
-  - data/logs/runs/ptu_YYYY-MM-DD_HHMMSS.log (per-run files, 7-day auto-clean)
-  - data/logs/runs/ptu_YYYY-MM-DD.log (daily rollup, 7-day auto-clean)
-  - data/logs/exports/ptu_run_YYYYMMDD_HHMMSS.log (manual snapshots, 7-day auto-clean)
+  - 日志/ptu.log (rotating, max 5MB, keep 3 backups — for log panel)
+  - 日志/ptu_boot.log (startup log)
+  - 日志/runs/ptu_YYYY-MM-DD_HHMMSS.log (per-run files, 7-day auto-clean)
+  - 日志/runs/ptu_YYYY-MM-DD.log (daily rollup, 7-day auto-clean)
+  - 日志/exports/ptu_run_YYYYMMDD_HHMMSS.log (manual snapshots, 7-day auto-clean)
   - stdout (dev mode only)
 """
 from __future__ import annotations
@@ -17,6 +18,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .version import VERSION
+
+LOG_FOLDER_NAME = "日志"
 
 
 def get_runtime_dir() -> Path:
@@ -32,10 +35,12 @@ def get_runtime_dir() -> Path:
     return Path(__file__).parent.parent.parent
 
 
-if getattr(sys, 'frozen', False):
-    LOG_DIR = get_runtime_dir() / "data" / "logs"
-else:
-    LOG_DIR = Path(__file__).parent.parent.parent / "data" / "logs"
+def get_log_dir() -> Path:
+    """Return the obvious user-facing log folder."""
+    return get_runtime_dir() / LOG_FOLDER_NAME
+
+
+LOG_DIR = get_log_dir()
 RUNS_DIR = LOG_DIR / "runs"
 EXPORTS_DIR = LOG_DIR / "exports"
 CURRENT_RUN_LOG: Path | None = None
@@ -203,6 +208,4 @@ def get_current_run_log() -> Path | None:
 
 
 def get_boot_log_path() -> Path:
-    if getattr(sys, 'frozen', False):
-        return get_runtime_dir() / "ptu_boot.log"
-    return Path(__file__).parent.parent.parent / "ptu_boot.log"
+    return get_log_dir() / "ptu_boot.log"

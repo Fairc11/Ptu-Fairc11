@@ -1846,7 +1846,7 @@ PermissionError: [Errno 13] Permission denied: 'C:\\Program Files\\Ptu\\ptu_boot
 
 修复结果：
 - 封包版统一使用 `%LOCALAPPDATA%\Ptu` 作为运行时可写目录
-- `ptu_boot.log`、`data/logs`、`cookies.yaml`、downloads、output 都写到用户目录
+- `ptu_boot.log`、`日志`、`cookies.yaml`、downloads、output 都写到用户目录
 - 新增 `tests/test_packaged_runtime_paths.py` 锁定该规则
 
 ### 修复：WebView2 误提示
@@ -1876,7 +1876,7 @@ PermissionError: [Errno 13] Permission denied: 'C:\\Program Files\\Ptu\\ptu_boot
 
 日志：
 - 每次启动生成独立运行日志
-- `data/logs/runs/` 和 `data/logs/exports/` 超过 7 天自动清理
+- `日志/runs/` 和 `日志/exports/` 超过 7 天自动清理
 - 捕获旧代码路径里的 `print()` 输出
 
 发布：
@@ -1907,3 +1907,127 @@ $env:PTU_NO_PAUSE='1'; cmd /c build_exe.bat
 - `pytest`：14 passed
 - `compileall` 通过
 - 安装包生成成功：`installer\Ptu_Setup_v1.4.1.exe`
+
+## v1.4.1 外部测试：扫码登录二维码空白 (2026-06-02)
+
+### 用户反馈
+
+用户把 v1.4.1 安装包发给国内朋友测试。朋友安装所有前置条件后，扫码登录弹窗二维码区域为空，界面提示：
+
+```text
+获取二维码失败：浏览器环境未就绪，请稍后重试（首次启动需下载 Chromium）
+```
+
+朋友回传的是安装目录压缩包 `Ptu.zip`，不是运行数据目录。
+
+### 排查记录
+
+检查 `Ptu.zip` 后确认：
+
+- 压缩包内容是安装目录 `Ptu/Ptu.exe + Ptu/_internal/`
+- 包内有 Playwright Python/Node 驱动代码
+- 包内没有真正可启动的 Chromium/Chrome 浏览器实体
+- 包内没有 `ptu_boot.log`、`data/logs/` 或 `%LOCALAPPDATA%\ms-playwright` 内容
+
+结论：安装目录不是运行日志目录。外部测试要排查封包运行问题时，必须让测试者同时回传：
+
+```text
+%LOCALAPPDATA%\Ptu\日志\ptu_boot.log
+%LOCALAPPDATA%\Ptu\日志\
+%LOCALAPPDATA%\ms-playwright\ 目录清单
+```
+
+### 根因
+
+`setup_check.install_chromium_direct()` 在 PyInstaller 封包环境会直接下载 Chromium headless shell，并把可执行文件放到类似路径：
+
+```text
+%LOCALAPPDATA%\ms-playwright\chromium_headless_shell-<build_id>\chrome-headless-shell-win64\headless_shell.exe
+```
+
+但旧版 `get_chromium_path()` 只搜索：
+
+```text
+chrome.exe
+chromium.exe
+chromium-headless-shell.exe
+```
+
+没有搜索 `headless_shell.exe`。因此在干净机器上可能出现“下载完成了，但检测仍认为 Chromium 未就绪”的问题。开发机已有 `%LOCALAPPDATA%\ms-playwright\chromium-xxxx\chrome-win64\chrome.exe`，所以本机发布验收没有暴露。
+
+### 修复
+
+- `setup_check.get_chromium_path()` 增加识别 `headless_shell.exe`
+- `backend/app/services/qr_login.py` 的兜底浏览器搜索也增加 `headless_shell.exe`
+- 新增 `tests/test_setup_check.py`，覆盖直接下载 headless shell 和 Playwright chrome 两种目录结构
+- `docs/release_checklist.md` 增加干净 `%LOCALAPPDATA%\ms-playwright` 环境下的封包扫码登录验收项
+
+### 经验
+
+封包版依赖验收不能只在开发机跑。只要某个依赖会在首次启动时下载，就必须在“没有该依赖缓存”的用户环境验收一次。外部测试回传 zip 时，也不能只收安装目录；运行时日志和用户缓存目录才是定位封包问题的关键。
+
+## v1.4.1 外部测试：日志文件夹明显化 (2026-06-02)
+
+### 用户需求
+
+用户希望外部测试者更容易找到日志，不再需要记住隐藏的运行目录；日志文件夹名称希望明显一点，候选是 `rizhi` 或中文 `日志`。
+
+### 决策
+
+采用中文 `日志`，原因：
+
+- 给普通测试者更直观
+- Windows 路径支持中文
+- 仍然放在用户可写运行目录下，不回到 `C:\Program Files\Ptu`
+
+封包版日志目录调整为：
+
+```text
+%LOCALAPPDATA%\Ptu\日志\
+```
+
+开发版日志目录调整为项目根目录：
+
+```text
+日志\
+```
+
+### 实现
+
+- `backend/app/log_config.py` 增加 `LOG_FOLDER_NAME = "日志"` 和 `get_log_dir()`
+- `ptu.log`、`runs/`、`exports/` 统一写入 `日志/`
+- `run.py` 和 `setup_check.py` 的启动日志也改为写入 `日志/ptu_boot.log`
+- 新增 `POST /api/logs/open-folder`，在资源管理器中打开日志文件夹
+- 前端运行日志面板增加“打开文件夹”按钮
+- `tests/test_packaged_runtime_paths.py` 更新封包路径断言，锁定 `%LOCALAPPDATA%\Ptu\日志`
+
+### 外部测试回传规则
+
+让测试者打开软件左下角“运行日志”面板，点击“打开文件夹”，把打开的 `日志` 文件夹压缩发回。扫码登录相关问题还需要附带 `%LOCALAPPDATA%\ms-playwright\` 目录清单。
+
+## v1.4.1 发布流程补强：干净机测试 (2026-06-02)
+
+### 背景
+
+用户指出开发机环境太完整，经常出现“本机没问题，朋友电脑有问题”。这是因为开发机已经缓存了 Python/Playwright/Chromium/Cookie/PATH/WebView2/FFmpeg 等依赖，不能代表真实用户机器。
+
+### 决策
+
+发布 GitHub 前新增固定门禁：
+
+```text
+本机开发测试 -> 本机清运行时冒烟 -> Windows Sandbox 干净机测试 -> 用户确认 -> GitHub Release
+```
+
+用户明确要求：未测试确认前，不上传 GitHub，不替换线上 Release 资产。
+
+### 实现
+
+- 新增 `docs/clean_machine_testing.md`：干净机测试说明
+- 新增 `scripts/clean_runtime_for_smoke.ps1`：把 `%LOCALAPPDATA%\Ptu` 和 `%LOCALAPPDATA%\ms-playwright` 临时挪到备份目录，模拟干净首次启动；支持 `-RestoreLatest` 恢复
+- 新增 `scripts/Ptu_Sandbox_Test.wsb`：Windows Sandbox 配置，映射安装包目录和 `sandbox-out/` 日志回传目录
+- `docs/release_checklist.md` 新增“干净机测试”章节
+
+### 注意
+
+`clean_runtime_for_smoke.ps1` 不删除本机数据，只移动到 `%LOCALAPPDATA%\PtuSmokeBackups\`。测试后必须运行 `-RestoreLatest` 恢复开发机原有登录态和 Playwright 缓存。

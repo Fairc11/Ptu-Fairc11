@@ -100,6 +100,7 @@ const Ptu = (() => {
         deleteTask(id) { return fetch(`/api/tasks/${id}`, {method:'DELETE'}).then(r=>r.json()); },
         batchDelete(ids) { return api.post('/api/tasks/batch-delete', {task_ids: ids}); },
         openFolder(taskId) { return api.post(`/api/tasks/${taskId}/open-folder`); },
+        openLogsFolder() { return api.post('/api/logs/open-folder'); },
     };
 
     // ── Desktop Bridge ─────────────────────────────────────────────────
@@ -842,6 +843,15 @@ const Ptu = (() => {
                 } catch(e) {
                     list.innerHTML = '<div class="log-file-item" style="color:var(--text-tertiary)">加载失败</div>';
                 }
+            }
+        },
+
+        async openLogsFolder() {
+            try {
+                const d = await api.openLogsFolder();
+                toast.success('已打开日志文件夹: ' + d.path);
+            } catch (err) {
+                toast.error('打开日志文件夹失败: ' + err.message);
             }
         },
     };

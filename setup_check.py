@@ -26,7 +26,7 @@ def _get_runtime_dir() -> Path:
 # 封包后 console=False 导致 sys.stdout=None，print() 会崩溃。
 # 改为写入启动日志文件（封包后写到用户可写目录）
 if sys.stdout is None:
-    _log = _get_runtime_dir() / "ptu_boot.log"
+    _log = _get_runtime_dir() / "日志" / "ptu_boot.log"
     _log.parent.mkdir(parents=True, exist_ok=True)
     sys.stdout = open(str(_log), "a", encoding="utf-8")
 
@@ -78,7 +78,7 @@ def get_chromium_path() -> str | None:
     for item in browsers_dir.iterdir():
         name = item.name.lower()
         if item.is_dir() and ("chromium" in name or "chrome" in name):
-            for exe in ["chrome.exe", "chromium.exe", "chromium-headless-shell.exe"]:
+            for exe in ["chrome.exe", "chromium.exe", "chromium-headless-shell.exe", "headless_shell.exe"]:
                 found = list(item.rglob(exe))
                 if found:
                     return str(found[0])

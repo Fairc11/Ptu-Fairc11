@@ -24,7 +24,7 @@ def _find_chromium() -> str | None:
             continue
         for item in base.iterdir():
             if item.is_dir() and ("chromium" in item.name.lower() or "chrome" in item.name.lower()):
-                for exe in ["chrome.exe", "chromium.exe", "chromium-headless-shell.exe"]:
+                for exe in ["chrome.exe", "chromium.exe", "chromium-headless-shell.exe", "headless_shell.exe"]:
                     found = list(item.rglob(exe))
                     if found:
                         return str(found[0])
