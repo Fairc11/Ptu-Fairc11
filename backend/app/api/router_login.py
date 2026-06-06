@@ -43,13 +43,9 @@ async def confirm():
 @router.post("/logout")
 async def logout():
     """清除登录状态（同时清理浏览器缓存）。"""
-    import yaml
     path = qr_service.cookies_path
     if path.exists():
-        path.write_text(yaml.dump({
-            "msToken": "", "ttwid": "", "odin_tt": "",
-            "passport_csrf_token": "", "sid_guard": "",
-        }, allow_unicode=True), "utf-8")
+        path.unlink()
     await qr_service.close()
     # 同步清除浏览器缓存
     try:

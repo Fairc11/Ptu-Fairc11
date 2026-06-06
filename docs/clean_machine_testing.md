@@ -54,15 +54,33 @@ sandbox-out\    -> Sandbox 桌面 PtuSandboxOut
 
 进入 Sandbox 后：
 
-1. 安装器会自动启动；如果没有启动，手动打开桌面 `PtuInstaller\Ptu_Setup_v1.4.2.exe`。
+1. 安装器会自动启动；如果没有启动，手动打开桌面 `PtuInstaller\Ptu_Setup_v1.5.0.exe`。
 2. 安装到默认目录。
 3. 启动 Ptu。
 4. 测试扫码登录二维码。
 5. 打开左下角“运行日志”，点击“打开文件夹”。
-6. 测试主页抓取、勾选 10 个作品批量下载。
+6. 测试主页抓取第一页，点击“下一批 30 个”加载后一页，再勾选 10 个作品批量下载。
+7. 抽查下载目录：每个作品目录应有 `post.txt`；视频为 `.mp4`，实况短视频为 `live_XXXX_vid.mp4`。
+8. 对一条图文/实况作品点击「生成视频」，确认生成 `douyin_slideshow.mp4`，并且不要求手动安装 FFmpeg。
 7. 如果失败，把 Sandbox 内 `%LOCALAPPDATA%\Ptu\日志` 复制到桌面 `PtuSandboxOut`。这个目录会回传到宿主机 `sandbox-out\`。
 
 关闭 Sandbox 后里面的数据会消失，所以失败日志必须先复制到 `PtuSandboxOut`。
+
+## 安装后自动自检
+
+安装候选包后，可以运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\v1_5_installed_smoke_check.ps1 -StartApp
+```
+
+如果不是默认安装目录，显式传入安装目录：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\v1_5_installed_smoke_check.ps1 -InstallDir "C:\Program Files\Ptu" -StartApp
+```
+
+这个脚本会检查安装目录中的 `Ptu.exe`、`ffmpeg.exe`、`ffprobe.exe`、内置 Chromium、第三方说明、版本号和敏感文件排除；带 `-StartApp` 时还会启动 Ptu 并确认本地页面返回 200。脚本不能替代扫码登录、真实下载和成片测试，但能快速排除“安装包漏文件”的问题。
 
 ## 验收标准
 
@@ -71,8 +89,10 @@ sandbox-out\    -> Sandbox 桌面 PtuSandboxOut
 - 扫码登录二维码能显示。
 - 安装器和卸载器常用界面为中文；卸载时能选择是否同时清理 `%LOCALAPPDATA%\Ptu` 和 `%LOCALAPPDATA%\ms-playwright`。
 - 日志文件夹可一键打开，路径是 `%LOCALAPPDATA%\Ptu\日志`。
-- 主页样例能抓到完整作品列表。
+- 主页样例能抓到第一页作品，并能由用户主动点击继续加载下一批 30 个。
 - 勾选 10 个主页作品批量下载，成功数等于选择数。
+- 安装目录存在 `ffmpeg.exe` 和 `ffprobe.exe`；图文/实况成片日志里能看到 FFmpeg 路径、音乐时长、循环次数和输出路径。
+- 生成的视频为竖屏 MP4；背景音乐比素材长时，素材会自动循环到音乐结束。
 
 ## 不要做的事
 

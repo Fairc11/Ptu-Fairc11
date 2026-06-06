@@ -243,6 +243,139 @@ async def save_logs():
     return {"status": "ok", "path": str(export_path), "filename": export_name}
 
 
+def _redact_diagnostic_text(text: str) -> str:
+    import re
+    patterns = [
+        (r"(?i)(cookie|cookies|sessionid|sid_tt|sid_guard|odin_tt|msToken|passport_csrf_token)(['\"]?\s*[:=]\s*)[^,\s;]+", r"\1\2[REDACTED]"),
+        (r"(?i)(Cookie:\s*)[^\n]+", r"\1[REDACTED]"),
+    ]
+    for pattern, repl in patterns:
+        text = re.sub(pattern, repl, text)
+    return text
+
+
+SENSITIVE_DIAGNOSTIC_NAMES = {
+    ".env",
+    "cookies.yaml",
+    "cookie.yaml",
+    "cookies.json",
+}
+
+
+def _should_skip_diagnostic_file(path: Path) -> bool:
+    name = path.name.lower()
+    return name in SENSITIVE_DIAGNOSTIC_NAMES or name.endswith(".zip")
+
+
+def _zip_tree(zf, root: Path, arc_root: str, *, redact_text: bool = False) -> None:
+    if not root.exists():
+        return
+    if root.is_file():
+        paths = [root]
+        base = root.parent
+    else:
+        paths = [p for p in sorted(root.rglob("*")) if p.is_file()]
+        base = root
+    for path in paths:
+        if _should_skip_diagnostic_file(path):
+            continue
+        rel = path.relative_to(base)
+        arcname = str(Path(arc_root) / rel).replace("\\", "/")
+        if redact_text or path.suffix.lower() in {".log", ".txt", ".json", ".yaml", ".yml"}:
+            text = path.read_text("utf-8", errors="replace")
+            zf.writestr(arcname, _redact_diagnostic_text(text))
+        else:
+            zf.write(path, arcname)
+
+
+def _create_diagnostic_package() -> Path:
+    """Create a redacted diagnostic zip with user-visible folders."""
+    from .log_config import LOG_DIR, RUNS_DIR, EXPORTS_DIR, get_current_run_log
+    import datetime
+    import sys
+    import zipfile
+
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_path = EXPORTS_DIR / f"ptu_diagnostic_{ts}.zip"
+
+    chromium_path = ""
+    try:
+        from setup_check import get_chromium_path
+        chromium_path = get_chromium_path() or ""
+    except Exception as exc:
+        chromium_path = f"检测失败: {exc}"
+
+    ffmpeg_path = Path(settings.ffmpeg_path)
+    ffprobe_path = ffmpeg_path.with_name("ffprobe.exe") if ffmpeg_path.name else Path("ffprobe.exe")
+    cookies_exists = settings.cookies_path.exists()
+    diagnostic = "\n".join([
+        f"Ptu version: {VERSION}",
+        f"Python frozen: {bool(getattr(sys, 'frozen', False))}",
+        f"Executable: {sys.executable}",
+        f"Download dir: {settings.download_dir}",
+        f"Output dir: {settings.output_dir}",
+        f"Log dir: {LOG_DIR}",
+        f"Chromium path: {chromium_path}",
+        f"Chromium exists: {Path(chromium_path).exists() if chromium_path and not chromium_path.startswith('检测失败') else False}",
+        f"FFmpeg path: {settings.ffmpeg_path}",
+        f"FFmpeg exists: {ffmpeg_path.exists()}",
+        f"FFprobe path: {ffprobe_path}",
+        f"FFprobe exists: {ffprobe_path.exists()}",
+        f"Cookies file exists: {cookies_exists}",
+        "Cookies content: [REDACTED]",
+    ])
+
+    # Diagnostic packages favor speed and predictable copy/paste over compression ratio.
+    # Media files are already compressed, so ZIP_STORED avoids long "exporting" waits.
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
+        zf.writestr("diagnostic.txt", diagnostic)
+        zf.writestr(
+            "cookies_status.txt",
+            "Ptu never exports raw Douyin cookies.\n"
+            f"cookies.yaml exists: {cookies_exists}\n"
+            "content: [REDACTED]\n",
+        )
+        _zip_tree(zf, settings.download_dir, "data/downloads")
+        _zip_tree(zf, settings.output_dir, "data/output")
+        _zip_tree(zf, settings.tasks_db, "data")
+        _zip_tree(zf, LOG_DIR, "日志", redact_text=True)
+        candidates = [LOG_DIR / "ptu.log", get_current_run_log()]
+        if RUNS_DIR.exists():
+            candidates.extend(sorted(RUNS_DIR.glob("ptu_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:3])
+        seen = set()
+        for path in candidates:
+            if not path or not path.exists() or not path.is_file():
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            text = path.read_text("utf-8", errors="replace")
+            zf.writestr(f"logs/{path.name}", _redact_diagnostic_text(text))
+
+    return zip_path
+
+
+@app.get("/api/logs/diagnostic")
+async def export_diagnostic_package():
+    """导出脱敏诊断包，包含下载/输出/任务/日志，绝不包含真实 cookie。"""
+    zip_path = _create_diagnostic_package()
+    return FileResponse(str(zip_path), filename=zip_path.name, media_type="application/zip")
+
+
+@app.post("/api/logs/diagnostic/create")
+async def create_diagnostic_package():
+    """Create a diagnostic zip and return its folder for the desktop UI."""
+    zip_path = _create_diagnostic_package()
+    return {
+        "status": "ok",
+        "path": str(zip_path),
+        "folder": str(zip_path.parent),
+        "filename": zip_path.name,
+    }
+
+
 @app.post("/api/logs/open-folder")
 async def open_logs_folder():
     """Open the user-facing log folder in Explorer."""
@@ -275,9 +408,11 @@ async def build_id():
 async def clear_browser_cache():
     """清除浏览器缓存和登录状态。"""
     from .services.scraper import scraper as douyin_scraper
+    from .services.qr_login import qr_service
     try:
+        await qr_service.close()
         await douyin_scraper.clear_cache()
-        return {"status": "ok", "message": "缓存和Cookie已清除"}
+        return {"status": "ok", "message": "已清除 Ptu 保存的抖音登录痕迹"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -297,7 +432,8 @@ async def open_folder(task_id: str):
     if task.download_path and Path(task.download_path).exists():
         folders.append(task.download_path)
     if task.output_path and Path(task.output_path).exists():
-        folders.append(task.output_path)
+        output_path = Path(task.output_path)
+        folders.append(str(output_path if output_path.is_dir() else output_path.parent))
     if not folders:
         if dl.exists():
             folders.append(str(dl))
@@ -306,9 +442,14 @@ async def open_folder(task_id: str):
     if not folders:
         raise HTTPException(404, "未找到文件")
     import subprocess
-    for f in folders:
-        subprocess.Popen(["explorer", f], shell=True)
-    return {"opened": folders}
+    opened = []
+    for f in dict.fromkeys(folders):
+        folder = Path(f)
+        if folder.is_file():
+            folder = folder.parent
+        subprocess.Popen(["explorer", str(folder)])
+        opened.append(str(folder))
+    return {"opened": opened}
 
 
 @app.get("/api/tasks/{task_id}/output")
@@ -319,7 +460,7 @@ async def download_output(task_id: str):
     task = store.get(task_id)
     if not task or not task.output_path:
         raise HTTPException(404, "视频未找到，请先渲染")
-    return FileResponse(task.output_path, filename="slideshow.mp4")
+    return FileResponse(task.output_path, filename=Path(task.output_path).name)
 
 
 @app.get("/api/tasks/{task_id}/files")

@@ -10,6 +10,21 @@ from typing import Optional
 from ..models.schemas import LivePhotoSource
 
 
+def _hidden_subprocess_kwargs() -> dict:
+    import subprocess
+    import sys
+
+    kwargs = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    if sys.platform.startswith("win"):
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return kwargs
+
+
 class LivePhotoProcessor:
     """Process live photos: HEIC conversion, video extraction."""
 
@@ -53,7 +68,8 @@ class LivePhotoProcessor:
 
         subprocess.run(
             [ffmpeg_path, "-i", video_path, "-vframes", "1", str(dst_path)],
-            capture_output=True, check=True
+            check=True,
+            **_hidden_subprocess_kwargs(),
         )
         return str(dst_path)
 

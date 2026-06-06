@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from ..models.schemas import LivePhotoSource, MediaType, ProfileResult, ScrapeResult, TaskStatus
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
+MAX_PROFILE_POSTS = 30
 
 # Lazy import to avoid circular dependency at module level
 _scraper = None
@@ -79,10 +80,11 @@ async def scrape_profile(data: dict):
     url = data.get("url", "").strip()
     if not url:
         raise HTTPException(400, "请输入主页链接")
-    max_posts = min(data.get("max_posts", 500), 500)
+    max_posts = min(int(data.get("max_posts", MAX_PROFILE_POSTS)), MAX_PROFILE_POSTS)
+    max_cursor = int(data.get("max_cursor", 0) or 0)
     try:
         scraper = _get_scraper()
-        result = await scraper.scrape_profile(url, max_posts=max_posts)
+        result = await scraper.scrape_profile(url, max_posts=max_posts, max_cursor=max_cursor)
         return result.model_dump(mode="json")
     except Exception as e:
         raise HTTPException(500, f"主页抓取失败: {str(e)[:200]}")
@@ -101,6 +103,8 @@ async def batch_download(data: dict):
     posts = data.get("posts", [])
     if not posts:
         raise HTTPException(400, "请选择要下载的作品")
+    if len(posts) > MAX_PROFILE_POSTS:
+        raise HTTPException(400, f"单次最多下载 {MAX_PROFILE_POSTS} 个作品，请减少选择数量")
 
     batch_id = uuid.uuid4().hex[:12]
     user_name = data.get("user_name", "未知用户")

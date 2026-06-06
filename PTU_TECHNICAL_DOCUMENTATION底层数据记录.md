@@ -1,8 +1,11 @@
 # Ptu - 抖音图文/视频下载工具 · 技术文档
 
-> 版本: 1.1.0  
-> 定型日期: 2026-05-09  
-> 状态: **已定型，不再修改**
+> 当前项目版本: v1.5.0 本地候选测试中
+> 初始定型日期: 2026-05-09
+> 最近更新: 2026-06-03
+> 状态: **长期技术真相来源，持续维护**
+
+> 2026-06-03 强制补充：后续任何登录、内置浏览、抓取、批量下载、日志导出相关开发，必须先读 `docs/superpowers/plans/2026-06-03-ptu-risk-control-policy.md`。Ptu 不能做成 DouyinCrawler 式全量采集器；禁止账号互动自动化、后台自动刷页面、关注/粉丝/喜欢/收藏/话题/搜索/音乐原声等大范围采集入口、绕过验证码/风控、人机校验、代理池/账号池/cookie 池。Cookie 不得进入 Git、安装包、Release、日志或诊断包。批量下载必须有限量、限并发、可取消，遇到风控/403/验证码/连续失败必须停止。
 
 ---
 
@@ -321,7 +324,7 @@ class DownloadManager:
 | **xfade** | `xfade=transition=fade` | 淡入淡出，需 >1 张图 |
 | **ken_burns** | `zoompan` + concat demuxer | 缩放推进效果 |
 
-注意: `live_photo_videos` 参数虽被接收但**未被实际使用** — 实况视频尚未集成到渲染管线。
+v1.5.0 更新: `live_photo_videos` 已接入渲染管线。`router_media._collect_render_media()` 会从 `live_photos/live_XXXX_img.*` 和 `live_XXXX_vid.mp4` 收集实况素材；`media_processor._build_douyin_clean_command()` 会把实况短视频或静态图排成 9:16 干净版视频，并在背景音乐未结束时循环素材。
 
 ---
 
@@ -619,7 +622,8 @@ iscc installer.iss
 ├── build_exe.bat                       # 打包脚本
 ├── installer.iss                       # Inno Setup 安装脚本
 ├── icon.ico                            # 应用图标
-├── PTU_TECHNICAL_DOCUMENTATION.md      # 本文档
+├── PTU_TECHNICAL_DOCUMENTATION底层数据记录.md  # 本文档，长期技术真相来源
+├── PTU_TECHNICAL_DOCUMENTATION.md      # 历史入口索引，指向底层数据记录
 ├── 启动桌面版.bat                       # 快速启动 bat
 ├── 开发模式（热重载）.bat               # 开发启动 bat
 │
@@ -678,7 +682,7 @@ iscc installer.iss
 
 ---
 
-> 文档结束。此版本 v1.1.0 已定型，不再修改。
+> v1.1.0 历史技术文档段落结束。后续内容为持续追加的研发记录、失败路径、发布验证和版本交接；不要在这里停止阅读。
 
 ---
 
@@ -886,7 +890,8 @@ Playwright 路径的 WAF 对抗分析：
 │       └── static/
 │           ├── css/app.css
 │           └── js/app.js           # 前端逻辑
-├── PTU_TECHNICAL_DOCUMENTATION.md  # 定型文档 v1.1.0
+├── PTU_TECHNICAL_DOCUMENTATION底层数据记录.md  # 长期技术真相来源
+├── PTU_TECHNICAL_DOCUMENTATION.md  # 历史入口索引
 ├── cookies.yaml                    # 抖音登录 Cookie（sessionid/sid_tt 有效）
 └── data/                           # 运行时生成
 ```
@@ -2127,3 +2132,168 @@ dist\Ptu\Ptu.exe
 - 安装器和卸载器常用界面是中文。
 - 卸载清理选择能按预期保留或删除 `%LOCALAPPDATA%\Ptu`、`%LOCALAPPDATA%\ms-playwright`。
 - 用户确认安装/卸载、扫码登录、主页抓取和下载均正常后，执行 v1.4.2 发布：提交 `14a6b16 fix: release v1.4.2 bundled chromium installer`，推送 `main` 和 tag `v1.4.2`，创建 GitHub Release 并上传 `Ptu_Setup_v1.4.2.exe`。Release: https://github.com/Fairc11/Ptu-Fairc11/releases/tag/v1.4.2；下载: https://github.com/Fairc11/Ptu-Fairc11/releases/download/v1.4.2/Ptu_Setup_v1.4.2.exe；线上资产大小 `325983491` 字节，HTTP HEAD 验证 `200`。
+
+---
+
+## v1.5.0 零前置条件 + 实况图文成片研发记录（2026-06-03 至 2026-06-04，本地候选验收）
+
+### 目标
+
+用户要求 v1.5.0 面向小白用户做到“无需任何前置条件”，并补齐 Ptu 的终极目标第一版：抖音图文/实况照片与背景音乐自动融合成一条完整视频。用户给出的示例位于外层目录 `举例/`，其中 `新建 文本文档.txt` 包含 5 个唯一抖音短链，屏录样例显示抖音会按图片/实况顺序滚动播放，素材播完但音乐未结束时从第一张循环。
+
+### 阶段 1-3 已完成
+
+- 保留上一轮修复：普通视频和实况短视频根据 URL、`mime_type`、响应 `content-type`、MP4 文件头识别 `.mp4`，避免 `video.jpg` / `live_XXXX_vid.jpg`。
+- 版本升级到 `1.5.0`：`backend/app/version.py` 与 `installer.iss` 同步。
+- `build.spec` 内置 Chromium、`vendor/ffmpeg/ffmpeg.exe` 和 `vendor/ffmpeg/ffprobe.exe`；`ffprobe.exe` 是音乐时长探测的必要依赖，不能省略。
+- `get_clipboard()` 移除 PowerShell fallback，粘贴按钮读取剪贴板不再闪命令行窗口。
+- 所有下载分支都会保存 `post.txt`：视频、图文、实况照片、综合内容和主页批量下载；`text_content` 为空时用 `title` 兜底。
+
+### 阶段 4：干净版抖音节奏成片
+
+核心实现：
+
+- `router_media._collect_render_media(download_path)` 同时扫描：
+  - `images/*.{jpg,jpeg,png,webp,heic,heif}`
+  - `live_photos/live_XXXX_img.*`
+  - `live_photos/live_XXXX_vid.mp4`
+- `media_processor.render_slideshow()` 输出文件改为 `douyin_slideshow.mp4`。
+- `media_processor._build_douyin_clean_command()` 生成干净版 9:16 竖屏 FFmpeg 命令：
+  - 默认分辨率 `1080x1920`，UI 默认选中“竖屏”。
+  - 有实况短视频时优先使用 `live_XXXX_vid.mp4`；没有视频时使用静态图。
+  - 有背景音乐时先用 `ffprobe` 探测音乐时长，再按 `ceil(music_duration / cycle_duration)` 循环素材，最后用 `-t music_duration` 截断。
+  - 无背景音乐时不循环，按素材总时长输出。
+- `main.py` 的 `/api/tasks/{task_id}/output` 下载文件名改为实际输出文件名。
+
+真实烟测：
+
+```text
+使用 vendor/ffmpeg/ffmpeg.exe 和 vendor/ffmpeg/ffprobe.exe
+输入：1 张临时图片 + 2 秒临时音乐
+输出：%TEMP%\ptu_vendor_render_smoke\out\douyin_slideshow.mp4
+ffprobe: width=180, height=320, video duration=2.000000, audio duration=2.000000
+```
+
+### 阶段 5：UI、日志与文档可理解性
+
+- 渲染弹窗标题改为“生成竖屏视频”，按钮改为“生成视频”。
+- 生成完成后，前端显示输出路径、文件名、素材数、实况视频数、音乐时长和循环次数。
+- `MediaProcessor.last_render_metadata` 保存最近一次渲染证据：
+  - `output_filename`
+  - `music_duration_seconds`
+  - `cycle_count`
+  - `visual_count`
+  - `live_video_count`
+  - `ffmpeg_path`
+  - `resolution`
+  - `fps`
+- 日志新增 `app.media` 记录：FFmpeg 路径、素材数、实况视频数、音乐时长、循环次数、输出路径。外部用户反馈问题时应优先让对方回传 `%LOCALAPPDATA%\Ptu\日志\`。
+
+### 阶段 6：v1.5 体验收口与候选安装包
+
+- 新版 PTU 图标已替换到 `icon.ico` 和 `backend/app/static/img/app-icon.png`，覆盖 EXE、安装器、标题栏和启动页。
+- 生成视频前端不再暴露转场、分辨率、时长等选择，固定为抖音式竖屏 preset：约 2.6 秒节奏、0.28 秒无绿边横向翻页转场、素材循环到音乐结束。
+- FFmpeg/ffprobe 子进程统一 `CREATE_NO_WINDOW`，避免生成视频或探测音乐时弹命令符窗口。
+- 二维码登录启动时不再自动弹窗；直连 API 超时收紧；Playwright 兜底使用 Ptu 自己的内置浏览器安全容器，且强制 `headless=True`、`--headless=new`、`--window-position=-32000,-32000`、`--window-size=1,1`。Ptu 不读取用户 Edge/Chrome 个人资料，避免右侧预览二次登录或把系统浏览器状态混进来。
+- 二维码弹窗显示倒计时、已扫码待手机确认、二维码过期和网络异常状态。
+- 主页抓取从一次性大批量改为每批最多 30 个作品；后续作品只能由用户点击“下一批 30 个”主动分页加载，不能自动全量抓取。
+- 内置抖音浏览面板落地为第三个模式 `内置浏览`：主界面提供浏览面板入口、地址栏和“复制当前链接 / 填到单个链接 / 填到主页链接”按钮；桌面版通过 `JsApi.open_douyin_panel()` 打开右侧可见 pywebview 抖音窗口，并通过用户主动点击 `get_douyin_panel_url()` 读取当前 URL。该版本不自动扫描页面、不自动翻页、不从 DOM 批量读取作品、不做账号互动。
+- 日志导出升级为 `/api/logs/diagnostic` 脱敏诊断包，包含版本、路径、Chromium/FFmpeg 状态、下载目录、输出目录、任务记录和日志，不导出真实 cookie。
+- `scripts/release_check.py` 加入 v1.5 发布闸门：主页分页、诊断包脱敏、隐藏 FFmpeg 控制台、二维码后台/离屏浏览器、FFmpeg/FFprobe/第三方说明打包都必须存在。
+
+### 阶段 8：v1.5 最终收口（2026-06-04）
+
+- 生成视频输出路径改为本次素材下载文件夹，默认 `douyin_slideshow.mp4`；文件被占用时使用 `douyin_slideshow_1.mp4` 等递增文件名。右侧 UI 显示“已保存到素材文件夹”，提供打开视频、打开文件夹和复制路径，不再写“下载生成视频”。
+- 下载器支持普通图片和实况照片混在同一条抖音：真实 `image_url + video_url` 配对进入 `live_photos`，无视频配对的图片进入 `images`。WebP/HEIC 转 JPG 后删除转换前中间文件，避免一张图看起来下载两次。
+- 登录状态只来自 Ptu 自己的 `cookies.yaml`。`scraper.py` 不再回退读取用户 Chrome/Edge cookie；`build.spec` 和发布检查不再要求 `browser_cookie3`。
+- 右侧 pywebview 抖音面板保持用户驱动：扫码成功后仅尝试把 Ptu 自己保存的 cookie 注入右侧面板，避免第二次登录；不读取系统浏览器资料，不自动扫描、不自动翻页、不做账号互动。
+- 顶部登录区提供可见的“退出登录”和“清除登录痕迹”。清理只删除 Ptu 自己的 cookie、Playwright/面板会话，不影响用户 Edge、Chrome 或系统浏览器。
+- `/api/logs/diagnostic/create` 新增桌面端导出入口，生成 zip 后返回本地路径，前端直接打开所在文件夹，便于复制发送。诊断包跳过真实 `cookies.yaml`、`.env` 和 zip 文件，日志/文本内容统一脱敏。
+
+### 当前验证（2026-06-04）
+
+```powershell
+python -m pytest tests -q
+# 64 passed
+
+python scripts\release_check.py
+# [OK] 发布检查通过
+
+python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts tests
+# passed
+
+node --check backend\app\static\js\app.js
+# passed
+
+$env:PTU_NO_PAUSE='1'; cmd /c build_exe.bat
+# installer\Ptu_Setup_v1.5.0.exe generated, Successful compile (294.718 sec)
+
+powershell -ExecutionPolicy Bypass -File scripts\v1_5_installed_smoke_check.ps1 -InstallDir dist\Ptu -StartApp -WaitSeconds 90
+# Smoke check passed.
+```
+
+### 阶段 7 本地候选安装包
+
+```text
+installer\Ptu_Setup_v1.5.0.exe
+大小：380,160,451 字节
+生成时间：2026-06-04 23:08:32
+```
+
+打包态已确认：
+
+- `dist\Ptu\Ptu.exe` 存在。
+- `dist\Ptu\ffmpeg.exe` 和 `dist\Ptu\ffprobe.exe` 存在，均来自 Gyan `ffmpeg-release-essentials.zip`，`-version` 退出码为 0。
+- `dist\Ptu\THIRD_PARTY_NOTICES.md` 存在。
+- `dist\Ptu\_internal\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe` 存在。
+- `dist\Ptu\_internal\ffmpeg.exe` 和 `dist\Ptu\_internal\ffprobe.exe` 不存在，避免重复打包；运行时优先命中 `Ptu.exe` 同级依赖。
+- `dist\Ptu\_internal\backend\.env` 和 `dist\Ptu\_internal\backend\cookies.yaml` 不存在。
+- `scripts\v1_5_installed_smoke_check.ps1 -InstallDir dist\Ptu -StartApp -WaitSeconds 90` 已通过：`Ptu.exe` 能启动，本地 `http://127.0.0.1:18080/` 返回 200；FFmpeg/FFprobe 可运行；Chromium headless shell 和第三方说明存在；`.env` 与 `cookies.yaml` 未打包。
+
+### 仍需用户人工验收
+
+- 双击安装器完成真实安装后，检查启动、扫码、粘贴、单链接下载、主页“下一批 30 个”、批量下载、生成视频、诊断包导出和卸载清理。
+- 点击登录获取二维码时，确认不弹出右侧抖音浏览器窗口，也不弹出 `chrome-headless-shell.exe` 防火墙确认窗。
+- 尚未上传 GitHub、未打 tag、未创建 Release；必须等用户测试确认后再发布。
+
+### 阶段 9：二测体验问题收口（2026-06-04）
+
+用户二测截图显示旧“内置浏览”做成了左侧第三个模式，并且桌面层又弹出一个独立标题栏窗口；主界面里的 iframe 区域被抖音拒绝后显示禁止符号。最终改为主界面常驻右侧 `browser-dock`：左侧只保留单链接/主页抓取，右侧负责抖音预览状态、复制当前链接、日志导出和打开日志文件夹。
+
+桌面抖音 WebView 仍必须由 pywebview 桌面层承载，不能塞进网页 iframe。为降低“两窗口割裂感”，`JsApi.open_douyin_panel()` 改为无标题栏贴靠式窗口：打开时覆盖主窗口右侧 Dock 区域，宽度根据主窗口放大到 620-760px，避免抖音登录弹层和浏览页只显示一半。Ptu 不再提供“填到单个链接/填到主页链接”按钮，因为 `get_current_url()` 可能返回 `user/self?modal_id=...` 这类页面状态 URL；界面只允许复制当前链接，并提示它是否像作品、图文或用户主页链接。
+
+二维码兜底也同步到安全策略：API 失败后优先使用 Ptu 内置 Chromium/headless shell，不再把系统 Edge 作为正常路径，不读取用户 Edge/Chrome 个人资料。
+
+用户桌面 `测试日志.zip` 记录了旧版诊断包问题：顶层出现 `cookies.yaml`，并且素材里有 `.webp` 与转换后的 `.jpg` 并存。当前规则是诊断包根路径和递归路径都跳过真实 cookie、`.env`、zip；只写 `cookies_status.txt` 脱敏状态。诊断包改用 `ZIP_STORED`，优先提升导出速度和可复制性。
+
+成片逻辑补充规则：单个视觉素材（单张实况照片或单张普通图片）不使用 `wipeleft` 翻页转场，而是直接持续播放/显示到 BGM 结束；两个及以上素材才使用抖音式横向翻页。
+
+首次启动新增免责声明：用户必须勾选并点击“同意并进入”后才能使用主界面，文案明确禁止账号互动自动化、绕过验证码/风控、导出真实 cookie。
+### 阶段 9.1：v1.5 体验优化收口（2026-06-05）
+
+本轮按用户确认的“严格一个窗口”目标推进，抖音预览不再使用第二个 pywebview 顶层窗口。新增 `backend/app/desktop_douyin_panel.py`，在 pywebview WinForms 主窗体里挂载 `Microsoft.Web.WebView2.WinForms.WebView2` 子控件；前端 `#browser-native-host` 只负责提供右侧区域坐标，Python 桥接层负责创建、显示、隐藏、缩放和导航。因此任务栏/桌面层面仍只有 Ptu 一个主窗口。
+
+右侧 WebView2 会拦截 `NewWindowRequested` 并在当前内嵌控件里导航，用来修复点击作者主页或新页面时跳到用户 Edge、丢登录态的问题。导航仍保留抖音域名白名单，不把右侧区域变成通用浏览器。
+
+右侧“复制当前链接”按钮已移除，避免复制到 `user/self?modal_id=...` 这类状态 URL。界面改为手动教程：在右侧抖音中打开作品，点击分享按钮，再复制链接并粘贴到左侧抓取框。Ptu 不自动扫描页面、不自动复制、不自动填入输入框。
+
+扫码登录 UI 从居中弹窗移到右侧浏览区内联卡片。登录成功后二维码卡片隐藏，Ptu 将自己保存的抖音 cookie 同步到右侧 WebView2，并自动打开抖音首页，让用户能明确看到“已经登录成功”。
+
+每次打开预览都会强制刷新内嵌 WebView2，先清空旧页面状态再导航目标 URL，避免第二个链接仍显示第一个视频。右侧浏览区、扫码卡片、手动教程和诊断结果也补齐了暗色模式。
+
+生成体验同步优化：`打开文件夹` 只打开素材/输出所在目录，不再把 `douyin_slideshow.mp4` 当作打开目标；播放视频必须由用户显式点击 `打开视频`。单任务进度条移动到结果卡片后面，更靠近下载/生成/打开文件夹操作区。
+
+实况照片清晰度优化：主渲染滤镜加入 `flags=lanczos`；单个实况视频素材采用居中适配，避免强行放大造成糊；编码从 `-crf 22` 调整为 `-crf 18`，preset 从 `fast` 调整为 `medium`。下载器内的实况小视频合成也使用 `-crf 18` 和 `flags=lanczos`。
+
+命令行闪窗优化：FFmpeg、ffprobe、实况合成和 PowerShell 剪贴板兜底命令统一加 Windows `CREATE_NO_WINDOW`，避免下载素材或生成视频时反复闪出命令行窗口。
+
+最终验证记录：
+
+- `python -m pytest tests -q`：68 passed, 4 warnings。
+- `python scripts\release_check.py`：`[OK] 发布检查通过`。
+- `python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts tests`：通过。
+- `node --check backend\app\static\js\app.js`：通过。
+- Playwright DOM 验证：右侧 native host、内联登录面板和手动复制教程存在；居中 `login-modal`、`复制当前链接` 不存在；进度区位于结果区之后。
+- `scripts\v1_5_installed_smoke_check.ps1 -InstallDir dist\Ptu -StartApp -WaitSeconds 90`：通过，安装版能启动并服务 `http://127.0.0.1:18080/`。
+- `dist\Ptu` 敏感文件审计：未发现 `.env`、`cookies.yaml`、`cookie.yaml`、`cookies.json`。
+- 最终安装包：`installer\Ptu_Setup_v1.5.0.exe`，380,168,689 字节，生成时间 2026-06-05 13:49:38。

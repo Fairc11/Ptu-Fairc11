@@ -27,6 +27,10 @@ if _frozen:
 from backend.app.version import VERSION
 
 
+def _should_run_setup(check_playwright, check_ffmpeg) -> bool:
+    return (not check_playwright()) or (not check_ffmpeg())
+
+
 def _get_boot_log_dir() -> Path:
     if getattr(sys, 'frozen', False):
         return Path(os.environ["PTU_RUNTIME_DIR"]) / "日志"
@@ -74,8 +78,8 @@ def main():
     try:
         import importlib.util
         if importlib.util.find_spec("setup_check"):
-            from setup_check import check_playwright
-            if not check_playwright():
+            from setup_check import check_ffmpeg, check_playwright
+            if _should_run_setup(check_playwright, check_ffmpeg):
                 from setup_check import run_setup
                 t = threading.Thread(target=run_setup, daemon=True)
                 t.start()

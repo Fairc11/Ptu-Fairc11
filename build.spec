@@ -6,6 +6,7 @@ Ptu - PyInstaller 打包配置 (--onedir 模式)
 输出 dist/Ptu/Ptu.exe + dist/Ptu/_internal/ 目录
 """
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -49,9 +50,19 @@ if _f2_spec and _f2_spec.submodule_search_locations:
 
 # 内置 Playwright Chromium headless shell，避免普通用户首次启动联网下载浏览器。
 _ms_playwright = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'ms-playwright'
-_bundled_shell = _ms_playwright / 'chromium_headless_shell-1217'
-if _bundled_shell.exists():
-    datas.append((str(_bundled_shell), 'ms-playwright/chromium_headless_shell-1217'))
+_bundled_shell = None
+if _ms_playwright.exists():
+    for _candidate in sorted(_ms_playwright.glob('chromium_headless_shell-*'), reverse=True):
+        if any(_candidate.rglob('chrome-headless-shell.exe')):
+            _bundled_shell = _candidate
+            break
+if _bundled_shell and _bundled_shell.exists():
+    datas.append((str(_bundled_shell), f'ms-playwright/{_bundled_shell.name}'))
+
+# 内置 FFmpeg，避免普通用户手动安装或首次联网下载。
+_vendor_ffmpeg = root / 'vendor' / 'ffmpeg' / 'ffmpeg.exe'
+_vendor_ffprobe = root / 'vendor' / 'ffmpeg' / 'ffprobe.exe'
+_third_party_notices = root / 'THIRD_PARTY_NOTICES.md'
 
 a = Analysis(
     [str(root / 'run.py')],
@@ -81,7 +92,6 @@ a = Analysis(
         'websockets',
         'playwright',
         'playwright.async_api',
-        'browser_cookie3',
         'webview',
         'webview.platforms.winforms',
         'plyer',
@@ -145,3 +155,17 @@ coll = COLLECT(
     upx_exclude=[],
     name='Ptu',
 )
+
+
+def _copy_to_dist_root(source):
+    if source.exists():
+        target = root / 'dist' / 'Ptu' / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
+# PyInstaller 6 的 onedir 默认把 datas 放进 _internal；FFmpeg 必须在 Ptu.exe 同级，
+# 这样封包运行时的 Path(sys.executable).parent 优先检测才能命中内置依赖。
+_copy_to_dist_root(_vendor_ffmpeg)
+_copy_to_dist_root(_vendor_ffprobe)
+_copy_to_dist_root(_third_party_notices)

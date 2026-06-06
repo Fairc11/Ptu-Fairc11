@@ -1,16 +1,30 @@
-# Ptu - 抖音图文/视频下载工具 v1.4.2
+# Ptu - 抖音图文/视频下载工具 v1.5.0
 
-抖音图文/实况照片/视频抓取+幻灯片视频合成工具。支持用户主页全量抓取。
+抖音图文/实况照片/视频抓取 + 文案保存 + 干净版竖屏视频合成工具。支持用户主页按 30 个作品分页抓取。
 
 ## AI 进入项目先读
 
-任何 AI/Agent 接手本项目，先读本文件，再读 `github-ptu/PTU_TECHNICAL_DOCUMENTATION底层数据记录.md`。后者记录了真实踩坑和失败路径，不要重复走已经证明无效的路线。
+任何 AI/Agent 接手本项目，先按以下顺序阅读：
+
+1. `docs/superpowers/plans/2026-06-03-ptu-risk-control-policy.md`
+2. 本文件 `CLAUDE.md`
+3. `PTU_TECHNICAL_DOCUMENTATION底层数据记录.md`
+4. `docs/superpowers/plans/2026-06-03-ptu-v1.5-zero-prerequisites.md`
+5. `docs/superpowers/plans/2026-06-03-ptu-v1.5-douyin-slideshow-feedback.md`
+
+风险红线文件优先级最高。若便利功能与风险红线冲突，必须先向用户说明风险，并改成低风险方案。
 
 开发规则：
 
 - 修 bug 必须先建立可复现测试或最小探针，再改代码。
+- Ptu 不能做成 DouyinCrawler 式全量采集器；不要新增关注、粉丝、喜欢、收藏、话题、搜索、音乐原声等大范围采集入口。
+- 不做自动点赞、评论、关注、私信、发布、转发、收藏等账号互动自动化；不绕过验证码、人机校验、风控页或接口限制。
+- 内置抖音浏览只能做“右侧可见浏览 + 用户主动复制/填入链接 + 左侧抓取”。允许同步 Ptu 自己扫码得到的登录态，但不要读取用户 Edge/Chrome 资料，不要自动扫描页面或后台刷推荐流。
+- 批量下载必须有限量、限并发、可取消；遇到 403、验证码、风控、登录异常或连续失败必须停止。
+- Cookie 只允许保存在 Ptu 本机运行数据目录；不得写入 Git、安装包、Release、日志导出、诊断包或任何可上传文件。退出登录/清除痕迹只能清 Ptu 自己的数据，不得触碰用户系统浏览器资料。
 - 单作品抓取目前主力是 f2/API；主页抓取主力是 httpx 直调主页 API。不要把主页抓取重新改回 Playwright WAF 对抗主路径。
 - 主页批量下载优先使用主页接口已返回的 `video_url/image_urls/music_url`，不要对每条作品重新走 `scrape(share_url)` 慢路径；只有字段缺失时才兜底抓详情。
+- 主页列表单次最多加载 30 个作品；后续作品必须由用户点击“下一批 30 个”主动分页加载，不要改回一次性全量抓取。
 - 桌面壳必须使用 Windows 原生标题栏；不要把主窗口改回 `frameless=True`。无边框窗口会破坏拖拽缩放、最大化和右上角关闭。
 - 开发版通过不等于封包版可发布。封包前必须执行 `python scripts/release_check.py`，封包后必须按 `docs/release_checklist.md` 冒烟。
 - GitHub 上传必须等用户确认测试完成。默认流程是：本机测试通过 -> 干净运行时冒烟 -> Windows Sandbox 测试 -> 用户确认 -> 再 commit/tag/push/Release。
@@ -26,9 +40,32 @@
 - 打包配置继续排除 `.env`、`cookies.yaml` 等开发/登录敏感文件，不能把本机 Cookie 或私密配置带进安装包。
 - 发版前验证从 16 项提升到 `20 passed`，新增覆盖官方 headless shell 文件名、内置 Playwright 浏览器目录优先级和完整 zip 解压结构。
 
+## v1.5.0 更新计划/记录
+
+- 面向小白用户改为“无前置条件”分发：安装包内置 Chromium、`ffmpeg.exe` 和 `ffprobe.exe`。
+- FFmpeg 正常情况下从安装目录使用；自动下载只作为文件缺失时的兜底。
+- 粘贴按钮读取剪贴板不再调用 PowerShell，避免打包版闪命令行窗口。
+- 下载器修复 MP4 被命名成 `.jpg` 的问题，普通视频和实况短视频必须落成 `.mp4`。
+- 所有下载路径都保存 `post.txt`：视频、图文、实况、综合内容和主页批量下载都要保留作品文案。
+- `media_processor.py` 已接入干净版抖音节奏成片：默认竖屏 `1080x1920`，输出 `douyin_slideshow.mp4`，素材播完但音乐未结束时自动循环素材到音乐结束。
+- 生成视频改为固定抖音式 preset：9:16 竖屏、原声、约 2.6 秒节奏、0.28 秒无绿边横向翻页转场；前端不再暴露转场/分辨率/时长选择。
+- FFmpeg/ffprobe 子进程统一隐藏 Windows 控制台窗口，并使用 UTF-8 容错解码，避免生成视频时弹命令符窗口或 GBK 解码报错。
+- 扫码登录弹窗显示二维码倒计时、已扫码待手机确认、过期和网络异常状态，避免朋友机器“扫码后没反应”。
+- 扫码登录、下载/抓取和右侧抖音预览统一使用 Ptu 自己保存的登录态；不读取用户 Edge/Chrome 资料。右侧预览只同步 Ptu cookie，退出登录/清除登录痕迹只清 Ptu 自己的数据。
+- 日志导出改为脱敏诊断包，包含版本、路径、Chromium/FFmpeg 状态、下载目录、输出目录、任务记录和日志，不导出真实 cookie。
+- 应用图标已替换为新版 PTU 图标，`icon.ico` 用于 EXE/安装器，`backend/app/static/img/app-icon.png` 用于应用内标题栏和启动页。
+- 内置浏览改为主界面右侧常驻预览 Dock：桌面版在同一个主窗口内挂载原生 WebView2 子控件承载抖音，扫码登录在右侧内联显示，登录成功后同步 Ptu 自己的登录态并直接显示抖音；用户按教程手动点分享并复制链接，不再提供复制当前链接或自动填入单个/主页抓取。
+- 生成视频直接输出到本次素材下载文件夹；右侧 UI 只能显示“已保存到素材文件夹/打开视频/打开文件夹/复制路径”，不要再写“下载生成视频”。
+- 单张实况照片或单张普通图片成片时不使用翻页转场，直接持续播放/显示到 BGM 结束；多素材才使用 `wipeleft` 翻页。
+- 首次启动必须显示免责声明，用户勾选同意后才能进入主界面。
+- 下载器必须支持普通图片和实况照片混在同一条抖音：真实图片+视频配对进 `live_photos`，无视频配对的图片进 `images`；WebP 转 JPG 后不要把转换前文件暴露成第二份素材。
+- 渲染日志必须能看到 `app.media` 记录的 FFmpeg 路径、素材数、实况视频数、音乐时长、循环次数和输出路径。
+- 阶段 9 已生成本地候选安装包 `installer\Ptu_Setup_v1.5.0.exe`（380,160,451 字节）；`dist\Ptu\Ptu.exe` 同级存在 `ffmpeg.exe`、`ffprobe.exe` 和 `THIRD_PARTY_NOTICES.md`，`_internal\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe` 已内置。
+- 用户测试确认前不要提交、打 tag、上传 GitHub Release 或替换线上资产。
+
 ## v1.4.1 更新记录
 
-- 修复主页分享文本解析：支持类似 `7- 长按复制此条消息... https://v.douyin.com/vAjDKDovzq8/ 0@0.com :0pm` 的完整抖音复制文本；该样例实测应抓到 200+ 作品，不要只用前 5 条冒烟代替全量分页验收。
+- 修复主页分享文本解析：支持类似 `7- 长按复制此条消息... https://v.douyin.com/vAjDKDovzq8/ 0@0.com :0pm` 的完整抖音复制文本；主页验收应覆盖第一页 30 个作品和用户主动点击“下一批 30 个”的分页链路。
 - 主页抓取 API 请求补齐浏览器上下文参数和 Cookie token，继续沿用 API 直调路线。
 - 修复主页批量下载失败/极慢：主页列表阶段保存视频直链、图文图片、音乐和实况数据，批量下载直接使用这些字段；实测该主页前 10 个作品 `10/10` 下载成功。
 - 修复详情解析里 `create_time` 未定义导致直连 API 成功后仍被吞掉的问题。
@@ -86,7 +123,7 @@ python run.py --web            # Web模式（浏览器访问 http://127.0.0.1:80
 │       │   └── _internal/
 │       └── Ptu_v1.4.0_YYYYMMDD.zip  # 分发用 ZIP
 ├── installer/
-│   └── Ptu_Setup_v1.4.2.exe      # 对外分发的单 EXE 安装包
+│   └── Ptu_Setup_v1.5.0.exe      # v1.5 候选安装包，用户确认前不要发布
 ├── backend/
 │   ├── app/
 │   │   ├── main.py        # FastAPI主应用
@@ -136,7 +173,7 @@ python run.py --web            # Web模式（浏览器访问 http://127.0.0.1:80
     │   ├── video/          # 视频文件
     │   └── live_photos/    # 实况照片（图片+短视频对）
     └── output/{id}/
-        └── slideshow.mp4
+        └── douyin_slideshow.mp4
 ```
 
 ## 内容类型
@@ -198,7 +235,7 @@ scrape(share_url)
 - **扫码登录**: 右上角点登录→抖音扫码→保存Cookie→后续 API 抓取
 - **仅登录可用**: 必须登录才能使用
 - **左侧导航侧边栏**: 切换"单个链接抓取"/"主页链接抓取"两种模式
-- **用户主页全量抓取**: 输入用户主页链接（或分享短链接），httpx 直调 API 获取作品列表，网格展示+批量下载
+- **用户主页分页抓取**: 输入用户主页链接（或分享短链接），httpx 直调 API 每次加载最多 30 个作品，用户主动点“下一批 30 个”继续翻页，网格展示+批量下载
 - **自动提取链接**: 粘贴抖音分享文本，自动提取URL
 - **图片预览**: 点击放大，左右键切换（通过后端 CDN 代理绕过防盗链）
 - **音乐试听**: 有背景音乐的作品可点击播放
@@ -207,7 +244,7 @@ scrape(share_url)
 - **下载文件夹命名**: 优先使用作品发布时间（Unix → YYYY-MM-DD_标题），降级用抓取时间
 - **开发模式热重载**: 改 CSS/JS/HTML/Python 文件后窗口自动刷新，无需重启
 - **深色/浅色模式**: 右上角一键切换，偏好保存到 localStorage
-- **视频合成**: FFmpeg合成幻灯片视频（淡入淡出/Ken Burns转场），实况照片可插入视频片段
+- **视频合成**: FFmpeg 合成干净版竖屏视频，图文/实况素材按背景音乐长度自动循环，输出 `douyin_slideshow.mp4`
 - **历史管理**: 支持单个删除和全选批量删除任务记录，点击历史条目可重新查看结果
 - **浏览器缓存清理**: 一键清除 Playwright 缓存和登录状态，退出登录时自动联动清理
 - **运行日志面板**: 左下角可展开的实时日志面板，支持一键导出和打开 `日志` 文件夹
@@ -253,8 +290,8 @@ scrape(share_url)
 | SSL 证书 | certifi 自动找到 | 找不到 `cacert.pem` | ✅ 启动设 `SSL_CERT_FILE` |
 | CWD | 项目根 | 用户双击位置 | ✅ `Path("file")` 全部适配 |
 | 安装目录写权限 | 项目目录可写 | `C:\Program Files\Ptu` 普通用户不可写 | ✅ `日志/cookies/downloads/output` 写入 `%LOCALAPPDATA%\Ptu` |
-| Playwright | 系统 Chrome/Edge | 需 `setup_check` 下载 Chromium | ✅ 首次启动后台下载 |
-| FFmpeg | config.yaml 路径 | 同上 | ✅ 下载到 exe 同级目录 |
+| Playwright | 系统 Chrome/Edge | 内置 Chromium，缺失才兜底下载 | ✅ `_internal/ms-playwright` 优先 |
+| FFmpeg | config.yaml 路径 | 内置 `ffmpeg.exe` + `ffprobe.exe`，缺失才兜底下载 | ✅ 安装目录优先 |
 | f2 库 Bark | 可能超时 60s+ | 同开发版 | ✅ `enable_bark=False` |
 | 窗口缩放/关闭 | 原生窗口可缩放和关闭 | `frameless=True` 会锁死拖边缩放，关闭按钮可能只隐藏到托盘 | ✅ `frameless=False` + `confirm_close=False` |
 | `cookies.yaml` | settings 解析 | 原硬编码 `Path("cookies.yaml")` | ✅ 改用 `self._cookies_path` |

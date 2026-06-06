@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 import asyncio
 import yaml
+import logging
+import time
 from pathlib import Path
 
 
@@ -43,6 +45,26 @@ _SSO_PARAMS = {
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
        "AppleWebKit/537.36 (KHTML, like Gecko) "
        "Chrome/130.0.0.0 Safari/537.36")
+logger = logging.getLogger("app.login")
+
+
+def _hidden_browser_args() -> list[str]:
+    """Keep the QR fallback browser invisible even when a channel ignores defaults."""
+    return [
+        "--headless=new",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-background-networking",
+        "--disable-default-apps",
+        "--disable-dev-shm-usage",
+        "--disable-extensions",
+        "--disable-features=Translate,AutomationControlled",
+        "--disable-gpu",
+        "--disable-popup-blocking",
+        "--no-first-run",
+        "--no-sandbox",
+        "--window-position=-32000,-32000",
+        "--window-size=1,1",
+    ]
 
 
 class QRLoginService:
@@ -55,28 +77,37 @@ class QRLoginService:
         self._mode = None          # "api" or "pw"
         self._api_client = None    # httpx client for API mode
         self._api_token = ""       # token for API polling
+        self._last_qr_status = "idle"
+        self._api_disabled_until = 0.0
 
     # ── QR Code Acquisition: try direct API → Playwright ──────────────
 
     async def get_qrcode(self) -> dict:
         """获取登录二维码。"""
-        # 方式一：直接 API（最可靠，不需要浏览器）
-        for retry in range(2):
+        # 方式一：直接 API。若最近已被 SSO 判定“路由已封禁”，短时间内直接走 Playwright，避免小白等待。
+        if time.time() >= self._api_disabled_until:
             try:
                 return await self._get_qrcode_api()
             except Exception as e:
-                if retry == 0:
-                    print(f"[QRLogin] API直调重试: {e}")
-                    continue
-                print(f"[QRLogin] API直调失败(2次): {e}")
+                message = str(e)
+                print(f"[QRLogin] API直调失败，切换 Playwright: {message}")
+                if "路由已封禁" in message or "API返回非JSON" in message:
+                    self._api_disabled_until = time.time() + 600
+        else:
+            print("[QRLogin] API直调近期失败，直接使用 Playwright")
 
-        # 方式二：Playwright + 已安装的 Chromium（setup_check 自动下载）
+        # 方式二：Playwright + Ptu 内置 Chromium/headless shell。
+        # 不读取、不复用用户 Edge/Chrome 个人资料，避免把系统浏览器状态混进 Ptu。
         exe_path = _find_chromium()
         if exe_path:
-            print(f"[QRLogin] 使用已安装 Chromium: {exe_path}")
+            print(f"[QRLogin] 使用内置 Chromium: {exe_path}")
             return await self._get_qrcode_pw(executable_path=exe_path)
 
-        raise RuntimeError("浏览器环境未就绪，请稍后重试（首次启动需下载 Chromium）")
+        try:
+            print("[QRLogin] 使用 Playwright 隔离浏览器获取二维码")
+            return await self._get_qrcode_pw()
+        except Exception as e:
+            raise RuntimeError(f"浏览器环境未就绪，请稍后重试（首次启动需准备 Chromium）: {e}") from e
 
     async def _get_qrcode_api(self) -> dict:
         """通过直接API调用获取二维码，完全不需要浏览器。"""
@@ -102,13 +133,13 @@ class QRLoginService:
             # Step 1: 访问 SSO 页面获取初始 Cookie（passport_csrf_token 等）
             await client.get(
                 "https://sso.douyin.com/get_qrcode/",
-                params=_SSO_PARAMS, headers=headers, timeout=20
+                params=_SSO_PARAMS, headers=headers, timeout=6
             )
 
             # Step 2: 调用二维码 API
             resp = await client.get(
                 "https://sso.douyin.com/passport/web/get_qrcode/",
-                params=_SSO_PARAMS, headers=headers, timeout=20
+                params=_SSO_PARAMS, headers=headers, timeout=6
             )
 
             content_type = resp.headers.get("content-type", "")
@@ -124,6 +155,7 @@ class QRLoginService:
                 raise RuntimeError(f"API返回异常: {data}")
 
             self._api_token = d.get("token", d.get("secret", ""))
+            self._last_qr_status = "waiting"
             if self._api_client:
                 try:
                     await self._api_client.aclose()
@@ -132,7 +164,7 @@ class QRLoginService:
             self._api_client = client
             self._mode = "api"
             print(f"[QRLogin] [OK] 通过API获取二维码成功")
-            return {"qrcode": qr_b64, "token": self._api_token or "qr"}
+            return {"qrcode": qr_b64, "token": self._api_token or "qr", "expires_in": 120}
         except Exception:
             await client.aclose()
             raise
@@ -148,7 +180,7 @@ class QRLoginService:
 
         self._playwright = await async_playwright().start()
 
-        launch_kwargs = {"headless": True}
+        launch_kwargs = {"headless": True, "args": _hidden_browser_args()}
         if channel:
             launch_kwargs["channel"] = channel
         if executable_path:
@@ -171,7 +203,8 @@ class QRLoginService:
                     data = await resp.json()
                     d = data.get("data", {})
                     if d.get("qrcode"):
-                        qr_future.set_result(d["qrcode"])
+                        token = d.get("token", d.get("secret", ""))
+                        qr_future.set_result((d["qrcode"], token))
                 except Exception:
                     pass
 
@@ -187,15 +220,17 @@ class QRLoginService:
                "service=https://www.douyin.com"
                "&need_logo=false&device_platform=web_app&aid=6383"
                "&account_sdk_source=sso&sdk_version=2.2.7-beta.6&language=zh")
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
 
         try:
-            qr_b64 = await asyncio.wait_for(qr_future, timeout=30)
+            qr_b64, token = await asyncio.wait_for(qr_future, timeout=20)
             self._browser = browser
             self._page = page
             self._mode = "pw"
+            self._api_token = token or ""
+            self._last_qr_status = "waiting"
             print(f"[QRLogin] [OK] 通过Playwright获取二维码成功")
-            return {"qrcode": qr_b64, "token": "qr"}
+            return {"qrcode": qr_b64, "token": self._api_token or "qr", "expires_in": 120}
         except asyncio.TimeoutError:
             print(f"[QRLogin] 超时，页面URL: {page.url}")
             await self.close()
@@ -211,6 +246,7 @@ class QRLoginService:
 
         # API 模式：先查本地 cookies.yaml，再尝试API轮询
         if self._check_session():
+            self._last_qr_status = "done"
             return {"status": "done", "message": "登录成功"}
 
         if self._mode == "api":
@@ -219,7 +255,8 @@ class QRLoginService:
             except Exception as e:
                 print(f"[QRLogin] API轮询异常: {e}")
 
-        return {"status": "waiting", "message": "等待扫码..."}
+        return {"status": self._last_qr_status if self._last_qr_status != "idle" else "waiting",
+                "message": self._status_message(self._last_qr_status)}
 
     async def _confirm_pw(self) -> dict:
         """检查 Playwright 页面中的登录状态。"""
@@ -237,14 +274,17 @@ class QRLoginService:
 
             if ck.get("sessionid") or ck.get("sid_tt"):
                 self._save_cookies(ck)
+                self._last_qr_status = "done"
                 return {"status": "done", "message": "登录成功", "cookies": list(ck.keys())}
 
             if "login" not in url and "passport" not in url and "get_qrcode" not in url:
                 if ck:
                     self._save_cookies(ck)
+                    self._last_qr_status = "done"
                     return {"status": "done", "message": "登录成功", "cookies": list(ck.keys())}
 
-            return {"status": "waiting", "message": "等待扫码..."}
+            return {"status": self._last_qr_status if self._last_qr_status != "idle" else "waiting",
+                    "message": self._status_message(self._last_qr_status)}
         except Exception:
             return {"status": "error", "message": "连接断开"}
 
@@ -258,14 +298,23 @@ class QRLoginService:
 
         # 尝试 SSO token check
         try:
+            params = {"service": "https://www.douyin.com"}
+            if self._api_token:
+                params["token"] = self._api_token
             resp = await client.get(
                 "https://sso.douyin.com/passport/web/qrcode/check",
-                params={"service": "https://www.douyin.com"},
+                params=params,
                 headers=headers, timeout=10
             )
             data = resp.json()
-            if data.get("data", {}).get("status") in ("done", "confirmed", "success"):
+            status = self._normalize_qr_status(data.get("data", {}))
+            if status != self._last_qr_status:
+                logger.info("二维码登录状态: %s", status)
+            self._last_qr_status = status
+            if status == "done":
                 return await self._exchange_cookies()
+            if status in ("scanned", "expired", "error"):
+                return {"status": status, "message": self._status_message(status)}
         except Exception:
             pass
 
@@ -278,11 +327,13 @@ class QRLoginService:
             for c in resp.cookies:
                 if c.name in ("sessionid", "sid_tt") and c.value:
                     self._save_cookies({c.name: c.value})
+                    self._last_qr_status = "done"
                     return {"status": "done", "message": "登录成功", "cookies": [c.name]}
         except Exception:
                 pass
 
-        return {"status": "waiting", "message": "等待扫码..."}
+        return {"status": self._last_qr_status if self._last_qr_status != "idle" else "waiting",
+                "message": self._status_message(self._last_qr_status)}
 
     async def _exchange_cookies(self) -> dict:
         """尝试从 douyin.com 获取 session cookies（复用 _api_client）。"""
@@ -303,11 +354,43 @@ class QRLoginService:
                     cookies[c.name] = c.value
             if cookies.get("sessionid") or cookies.get("sid_tt"):
                 self._save_cookies(cookies)
+                self._last_qr_status = "done"
                 return {"status": "done", "message": "登录成功",
                         "cookies": list(cookies.keys())}
         except Exception:
             pass
         return {"status": "waiting", "message": "等待扫码..."}
+
+    def _normalize_qr_status(self, data: dict) -> str:
+        raw = str(
+            data.get("status")
+            or data.get("qr_status")
+            or data.get("scan_status")
+            or data.get("status_code")
+            or data.get("error_code")
+            or ""
+        ).lower()
+        message = str(data.get("message") or data.get("description") or "").lower()
+        combined = f"{raw} {message}"
+        if raw in {"3", "done", "confirmed", "success", "login_success"}:
+            return "done"
+        if raw in {"2", "scanned", "scaned", "scan_success", "confirming"}:
+            return "scanned"
+        if raw in {"4", "expired", "timeout", "qr_expired"} or "expired" in combined or "过期" in combined:
+            return "expired"
+        if raw in {"5", "error", "failed", "fail"}:
+            return "error"
+        return "waiting"
+
+    def _status_message(self, status: str) -> str:
+        return {
+            "done": "登录成功",
+            "scanned": "已扫码，请在手机上确认登录",
+            "expired": "二维码已过期，请刷新",
+            "error": "登录状态异常，请刷新二维码",
+            "waiting": "请用抖音扫描二维码",
+            "idle": "请用抖音扫描二维码",
+        }.get(status, "请用抖音扫描二维码")
 
     # ── Cookie Management ─────────────────────────────────────────────
 
@@ -342,8 +425,12 @@ class QRLoginService:
                 cookies = yaml.safe_load(self.cookies_path.read_text("utf-8")) or {}
             except Exception:
                 pass
-        return {"logged_in": bool(cookies.get("sessionid") or cookies.get("sid_tt")),
-                "cookies_count": len(cookies)}
+        logged_in = bool(cookies.get("sessionid") or cookies.get("sid_tt"))
+        return {
+            "logged_in": logged_in,
+            "status": "logged_in" if logged_in else ("expired" if cookies else "logged_out"),
+            "cookies_count": len(cookies),
+        }
 
     async def close(self):
         if self._browser:

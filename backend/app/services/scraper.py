@@ -69,6 +69,7 @@ class DouyinScraper:
             from playwright.async_api import async_playwright
             self._playwright = await async_playwright().start()
         launch_args = [
+            "--headless=new",
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
             "--disable-web-security",
@@ -80,6 +81,8 @@ class DouyinScraper:
             "--no-first-run",
             "--disable-default-apps",
             "--disable-component-update",
+            "--window-position=-32000,-32000",
+            "--window-size=1,1",
         ]
         for channel in ["chrome", "msedge"]:
             try:
@@ -113,7 +116,7 @@ class DouyinScraper:
         try:
             p = Path(self._cookies_path)
             if p.exists():
-                p.write_text("", encoding="utf-8")
+                p.unlink()
         except Exception:
             pass
         self.cookies = {}
@@ -146,19 +149,7 @@ class DouyinScraper:
                     self.cookies = {k: v for k, v in data.items() if v}
             except Exception:
                 self.cookies = {}
-        if not self.cookies:
-            self._load_cookies_from_browser()
         self.cookies = ensure_ttwid(self.cookies)
-
-    def _load_cookies_from_browser(self):
-        try:
-            import browser_cookie3
-            for c in browser_cookie3.chrome(domain_name="douyin.com"):
-                if c.name in ("sessionid", "sid_tt", "sid_guard", "passport_csrf_token",
-                              "msToken", "ttwid", "odin_tt"):
-                    self.cookies[c.name] = c.value
-        except Exception:
-            pass
 
     async def scrape(self, share_url: str) -> ScrapeResult:
         """需登录。先试直调 API，失败后用 Playwright 浏览器调 API（浏览器自动处理签名）。"""
@@ -1553,8 +1544,13 @@ class DouyinScraper:
             except Exception:
                 pass
 
-    async def scrape_profile(self, profile_url: str, max_posts: int = 500) -> ProfileResult:
-        """抓取用户主页所有作品列表。直接调用抖音API（无需Playwright）。"""
+    async def scrape_profile(
+        self,
+        profile_url: str,
+        max_posts: int = 30,
+        max_cursor: int = 0,
+    ) -> ProfileResult:
+        """抓取用户主页作品列表。每次只取一页，由用户主动翻到下一页。"""
         self._load_cookies(self._cookies_path)
         parsed = self._extract_profile_sec_uid(profile_url)
         sec_uid = parsed.sec_uid
@@ -1590,15 +1586,15 @@ class DouyinScraper:
                 print(f"[Profile] 获取用户信息失败: {e}")
 
             # 3) 分页获取作品列表
-            max_cursor = 0
             has_more = True
+            next_cursor = int(max_cursor or 0)
             seen_ids = set()
             while has_more and len(posts) < max_posts:
                 try:
                     post_url_api, headers = self._build_profile_api_request(
                         "https://www.douyin.com/aweme/v1/web/aweme/post/",
                         sec_uid,
-                        max_cursor=max_cursor,
+                        max_cursor=next_cursor,
                         count=20,
                     )
                     post_resp = await client.get(
@@ -1678,8 +1674,8 @@ class DouyinScraper:
                         ))
                         if len(posts) >= max_posts:
                             break
-                    has_more = post_data.get("has_more", False)
-                    max_cursor = post_data.get("max_cursor", 0)
+                    has_more = bool(post_data.get("has_more", False))
+                    next_cursor = int(post_data.get("max_cursor", 0) or 0)
                 except Exception as e:
                     print(f"[Profile] 获取作品列表失败: {e}")
                     break
@@ -1691,6 +1687,9 @@ class DouyinScraper:
             avatar_url=avatar_url,
             posts=posts,
             total=len(posts),
+            has_more=has_more,
+            next_cursor=next_cursor,
+            page_size=max_posts,
         )
 
 

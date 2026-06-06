@@ -8,7 +8,82 @@ import os
 import sys
 import ctypes
 import subprocess
+import json
+import time
 from pathlib import Path
+from urllib.parse import urlparse
+
+
+ALLOWED_DOUYIN_HOSTS = {
+    "www.douyin.com",
+    "douyin.com",
+    "v.douyin.com",
+    "www.iesdouyin.com",
+    "iesdouyin.com",
+}
+
+
+def _normalize_douyin_url(url: str | None) -> str:
+    value = (url or "").strip()
+    if not value:
+        return "https://www.douyin.com/"
+    if value.startswith("www."):
+        value = "https://" + value
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        return "https://www.douyin.com/"
+    host = (parsed.netloc or "").lower()
+    if host not in ALLOWED_DOUYIN_HOSTS:
+        return "https://www.douyin.com/"
+    return value.replace("http://", "https://", 1)
+
+
+DOUYIN_COOKIE_NAMES = (
+    "sessionid",
+    "sid_tt",
+    "sid_guard",
+    "passport_csrf_token",
+    "msToken",
+    "ttwid",
+    "odin_tt",
+)
+
+
+def _load_ptu_douyin_cookies() -> dict[str, str]:
+    try:
+        import yaml
+        from .config import settings
+
+        path = Path(settings.cookies_path)
+        if not path.exists():
+            return {}
+        data = yaml.safe_load(path.read_text("utf-8")) or {}
+        return {
+            name: str(data.get(name) or "")
+            for name in DOUYIN_COOKIE_NAMES
+            if data.get(name)
+        }
+    except Exception:
+        return {}
+
+
+def _cookie_sync_script(cookies: dict[str, str], *, clear: bool = False) -> str:
+    if clear:
+        payload = {name: "" for name in DOUYIN_COOKIE_NAMES}
+        max_age = 0
+    else:
+        payload = cookies
+        max_age = 60 * 60 * 24 * 30
+    return f"""
+        (function() {{
+            const cookies = {json.dumps(payload, ensure_ascii=False)};
+            for (const [name, value] of Object.entries(cookies)) {{
+                const encoded = encodeURIComponent(value || '');
+                document.cookie = `${{name}}=${{encoded}}; Domain=.douyin.com; Path=/; Max-Age={max_age}; Secure; SameSite=None`;
+            }}
+            return Object.keys(cookies).length;
+        }})();
+    """
 
 
 class JsApi:
@@ -16,9 +91,11 @@ class JsApi:
 
     def __init__(self):
         self._window = None
+        self._douyin_panel = None
 
     def set_window(self, window):
         self._window = window
+        self._douyin_panel = None
 
     # ── File Dialogs ───────────────────────────────────────────────────
 
@@ -86,6 +163,72 @@ class JsApi:
             subprocess.Popen(["explorer", "/select,", path])
         except Exception:
             pass
+
+    # ── Built-in Douyin Browser Panel ─────────────────────────────────
+
+    def _get_douyin_panel(self):
+        if self._douyin_panel is None:
+            from .desktop_douyin_panel import NativeDouyinPanel
+            storage = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Ptu" / "DouyinPanel"
+            self._douyin_panel = NativeDouyinPanel(self._window, storage)
+        return self._douyin_panel
+
+    def mount_douyin_panel(self, rect: dict | None = None, visible: bool = False) -> dict:
+        """Mount the native Douyin WebView2 child control inside the main window."""
+        try:
+            return self._get_douyin_panel().mount(rect, visible=visible)
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def resize_douyin_panel(self, rect: dict) -> dict:
+        """Keep the native child WebView aligned to the HTML dock host."""
+        try:
+            return self._get_douyin_panel().set_bounds(rect)
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def open_douyin_panel(self, url: str = "", rect: dict | None = None) -> dict:
+        """Open Douyin in the right-dock native child WebView2 control."""
+        try:
+            return self._get_douyin_panel().open(url, rect, force_reload=True)
+        except Exception as exc:
+            return {"status": "error", "message": str(exc), "url": _normalize_douyin_url(url)}
+
+    def hide_douyin_panel(self) -> dict:
+        """Hide the visible Douyin companion panel without clearing login state."""
+        try:
+            return self._get_douyin_panel().hide()
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def sync_douyin_panel_login(self, url: str = "") -> dict:
+        """Sync Ptu's own Douyin cookies into the visible panel session.
+
+        This only uses cookies saved by Ptu's QR login. It never reads the user's Edge/Chrome profile,
+        passwords, history, or browser cookies.
+        """
+        safe_url = _normalize_douyin_url(url)
+        cookies = _load_ptu_douyin_cookies()
+        if not cookies:
+            return {"status": "missing_cookies", "url": safe_url, "synced": 0}
+        try:
+            return self._get_douyin_panel().sync_cookies(cookies, safe_url)
+        except Exception as exc:
+            return {"status": "error", "message": str(exc), "url": safe_url, "synced": 0}
+
+    def clear_douyin_panel_login(self) -> dict:
+        """Clear Douyin cookies from the companion panel only."""
+        try:
+            return self._get_douyin_panel().clear_cookies()
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def get_douyin_panel_url(self) -> dict:
+        """Return the visible Douyin panel URL only after user request."""
+        try:
+            return self._get_douyin_panel().current_url()
+        except Exception as exc:
+            return {"status": "error", "message": str(exc), "url": ""}
 
     # ── Window Management ──────────────────────────────────────────────
 
@@ -169,17 +312,24 @@ class JsApi:
             pass
 
         try:
+            kwargs = {
+                "input": text or "",
+                "text": True,
+                "encoding": "utf-8",
+                "check": False,
+                "capture_output": True,
+                "timeout": 5,
+            }
+            if sys.platform.startswith("win"):
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", "Set-Clipboard -Value $input"],
-                input=text or "", text=True, encoding="utf-8", check=False,
-                capture_output=True, timeout=5,
+                **kwargs,
             )
         except Exception:
             pass
 
     def get_clipboard(self) -> str:
-        # Prefer the Win32 clipboard API. It is faster and more reliable in
-        # pywebview/windowless packaged mode than spawning PowerShell.
         try:
             CF_UNICODETEXT = 13
             user32 = ctypes.windll.user32
@@ -201,15 +351,7 @@ class JsApi:
                     user32.CloseClipboard()
         except Exception:
             pass
-
-        try:
-            r = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
-                capture_output=True, text=True, timeout=5
-            )
-            return r.stdout.strip()
-        except Exception:
-            return ""
+        return ""
 
     # ── System Info ────────────────────────────────────────────────────
 

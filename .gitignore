@@ -1,25 +1,40 @@
 # ── 敏感信息 ──────────────────────────────────
-cookies.yaml                    # 抖音登录 Cookie（泄露=账号被盗）
-.env                            # 环境变量
-*.key                           # 密钥文件
-*.pem                           # 证书
+# 抖音登录 Cookie（泄露=账号被盗）
+cookies.yaml
+# 环境变量
+.env
+# 密钥文件
+*.key
+# 证书
+*.pem
 
 # ── 运行时数据 ────────────────────────────────
-data/                           # 任务数据库 + 下载文件
-logs/                           # 运行时日志
-日志/                           # 运行时日志（用户可见）
-sandbox-out/                    # Windows Sandbox 回传日志
+# 任务数据库 + 下载文件
+data/
+# 运行时日志
+logs/
+# 运行时日志（用户可见）
+日志/
+# Windows Sandbox 回传日志
+sandbox-out/
 
 # ── 构建产物 ──────────────────────────────────
-dist/                           # PyInstaller 打包输出
-build/                          # PyInstaller 构建中间文件
-installer/                      # Inno Setup 安装包输出（作为 GitHub Release 资产上传，不进 git）
-*.spec                          # .spec 已跟踪，排除构建生成的同名文件
-*.pkg                           # PyInstaller 中间包
-*.toc                           # PyInstaller 中间文件
+# PyInstaller 打包输出
+dist/
+# PyInstaller 构建中间文件
+build/
+# Inno Setup 安装包输出（作为 GitHub Release 资产上传，不进 git）
+installer/
+# .spec 已跟踪，排除构建生成的同名文件
+*.spec
+# PyInstaller 中间包
+*.pkg
+# PyInstaller 中间文件
+*.toc
 
 # ── 发布产物（Releases 走 GitHub Releases）───
-releases/                       # 发行的 exe 包（应通过 Releases 发布）
+# 发行的 exe 包（应通过 Releases 发布）
+releases/
 
 # ── 本地备份 ──────────────────────────────────
 备份_*/
@@ -49,5 +64,3 @@ ptu_error.log
 _exe_*.log
 _exe_*.txt
 login_page*.png
-
-installer/

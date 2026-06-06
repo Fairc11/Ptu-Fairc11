@@ -35,17 +35,6 @@
             <p class="input-hint">支持图文 / 实况照片 / 视频 · 粘贴自动提取链接</p>
         </section>
 
-        <!-- Progress Section -->
-        <section id="progress-section" class="card hidden">
-            <div class="progress-header">
-                <span id="progress-message">处理中...</span>
-                <button class="btn-text" onclick="Ptu.ui.cancelTask()">取消</button>
-            </div>
-            <div class="progress-track">
-                <div id="progress-bar" class="progress-fill" style="width:0%"></div>
-            </div>
-        </section>
-
         <!-- Error Section -->
         <section id="error-section" class="card card-error hidden">
             <div class="error-content">
@@ -87,7 +76,7 @@
             <div class="result-actions">
                 <button id="download-btn" class="btn btn-success" onclick="Ptu.ui.download()">下载素材</button>
                 <button id="render-btn" class="btn btn-accent" onclick="Ptu.ui.renderModal.open()">生成视频</button>
-                <a id="download-video-link" class="btn btn-secondary hidden" target="_blank">下载视频</a>
+                <a id="download-video-link" class="btn btn-secondary hidden" target="_blank">打开视频</a>
             </div>
 
             <!-- Download Location -->
@@ -95,6 +84,18 @@
                 <span class="path-label">保存位置</span>
                 <code id="download-path"></code>
                 <button class="btn-text" onclick="Ptu.ui.openFolder()">打开文件夹</button>
+                <button id="copy-path-btn" class="btn-text hidden" onclick="Ptu.ui.copyCurrentPath()">复制路径</button>
+            </div>
+        </section>
+
+        <!-- Progress Section -->
+        <section id="progress-section" class="card progress-card hidden">
+            <div class="progress-header">
+                <span id="progress-message">处理中...</span>
+                <button class="btn-text" onclick="Ptu.ui.cancelTask()">取消</button>
+            </div>
+            <div class="progress-track">
+                <div id="progress-bar" class="progress-fill" style="width:0%"></div>
             </div>
         </section>
 
@@ -185,19 +186,35 @@
                 </button>
             </div>
             <div id="posts-grid" class="profile-grid"></div>
+            <div id="profile-page-bar" class="profile-page-bar hidden">
+                <span id="profile-page-status" class="count-badge">已加载 0 个</span>
+                <button id="profile-next-page-btn" class="btn btn-secondary btn-sm" onclick="Ptu.ui.loadNextProfilePage()">下一批 30 个</button>
+            </div>
         </section>
     </div>
-</div>
 
-<!-- Login Modal -->
-<div id="login-modal" class="modal-overlay hidden">
-    <div class="modal">
-        <div class="modal-header">
-            <h3>抖音扫码登录</h3>
-            <button class="modal-close" onclick="Ptu.ui.loginModal.close()">&times;</button>
+    <!-- Persistent right Douyin browser dock -->
+    <aside id="browser-dock">
+        <div class="browser-dock-toolbar">
+            <div>
+                <strong>抖音预览</strong>
+                <span id="browser-dock-state">未打开</span>
+            </div>
+            <button class="btn-text" onclick="Ptu.ui.browserHome()">回到首页</button>
         </div>
-        <div class="modal-body">
-            <p>登录后可享快速解析</p>
+        <div class="browser-address-row">
+            <input type="text" id="browser-url-input" value="https://www.douyin.com/" aria-label="抖音浏览地址">
+            <button class="btn btn-accent btn-sm" onclick="Ptu.ui.openDouyinPanel()">打开抖音</button>
+        </div>
+        <div class="browser-action-grid">
+            <button class="btn btn-secondary btn-sm" onclick="Ptu.ui.loginModal.open()">扫码登录</button>
+            <button class="btn btn-secondary btn-sm" onclick="Ptu.ui.hideDouyinPanel()">隐藏预览</button>
+            <button class="btn btn-secondary btn-sm" onclick="Ptu.ui.exportLogs()">导出诊断包</button>
+            <button class="btn btn-secondary btn-sm" onclick="Ptu.ui.openLogsFolder()">打开日志文件夹</button>
+        </div>
+        <div id="browser-login-panel" class="browser-login-panel hidden">
+            <strong>抖音扫码登录</strong>
+            <span>用抖音 App 扫码。登录成功后，这里会自动切换到抖音页面。</span>
             <div class="qr-frame">
                 <div id="qr-loading" style="color:var(--text-tertiary);font-size:12px">获取二维码中...</div>
                 <img id="qr-image" class="hidden" alt="QR Code">
@@ -208,57 +225,43 @@
             <p id="qr-status" class="qr-status">请用抖音扫描二维码</p>
             <button class="qr-refresh" onclick="Ptu.ui.loginModal.refresh()">刷新二维码</button>
         </div>
-    </div>
+        <div class="browser-copy-guide">
+            <strong>手动复制链接</strong>
+            <span>在右侧抖音里打开作品，点视频右侧分享按钮，再点“复制链接”，然后粘贴到左侧抓取框。</span>
+        </div>
+        <div id="browser-native-host" class="browser-native-host" aria-label="抖音内置浏览区">
+            <div class="browser-preview-card">
+                <div class="browser-preview-mark">PTU</div>
+                <strong>右侧内置浏览区</strong>
+                <span>点击“打开抖音”后，抖音会直接出现在这个区域内，不再新开窗口。</span>
+            </div>
+        </div>
+        <p class="browser-risk-note">Ptu 不自动扫描页面、不自动翻页、不做点赞评论关注等账号互动。链接由你在抖音页面内手动复制，再粘贴到左侧抓取。</p>
+        <p id="browser-status" class="input-hint">等待打开抖音预览。</p>
+        <div id="diagnostic-result" class="diagnostic-result hidden">
+            <span>最新诊断包</span>
+            <code id="diagnostic-path"></code>
+            <button class="btn-text" onclick="Ptu.ui.openDiagnosticFolder()">打开所在文件夹</button>
+        </div>
+    </aside>
 </div>
 
 <!-- Render Modal -->
 <div id="render-modal" class="modal-overlay hidden">
     <div class="modal">
         <div class="modal-header">
-            <h3>渲染选项</h3>
+            <h3>生成竖屏视频</h3>
             <button class="modal-close" onclick="Ptu.ui.renderModal.close()">&times;</button>
         </div>
         <div class="modal-body" style="text-align:left">
-            <div class="option-group">
-                <label>每张图片时长</label>
-                <input type="range" id="image-duration" min="1" max="10" value="3" step="0.5" oninput="document.getElementById('duration-val').textContent=this.value+'s'">
-                <span id="duration-val" class="duration-val">3s</span>
-            </div>
-            <div class="option-group">
-                <label>转场</label>
-                <select id="transition">
-                    <option value="fade">淡入淡出</option>
-                    <option value="none">无转场</option>
-                    <option value="ken_burns">Ken Burns</option>
-                </select>
-            </div>
-            <div class="option-group">
-                <label>分辨率</label>
-                <select id="resolution">
-                    <option value="1920x1080">1080p</option>
-                    <option value="1280x720">720p</option>
-                    <option value="1080x1920">竖屏</option>
-                </select>
-            </div>
-            <div class="option-group">
-                <label>背景音乐</label>
-                <select id="music-choice">
-                    <option value="original">抖音原声</option>
-                    <option value="none">无</option>
-                </select>
-            </div>
-            <div id="live-photo-option" class="option-group" style="display:none">
-                <label>实况照片</label>
-                <select id="live-photo-mode">
-                    <option value="image">仅用图片</option>
-                    <option value="video">插入视频</option>
-                    <option value="both">分别提取</option>
-                </select>
+            <div class="render-preset">
+                <strong>抖音式图文成片</strong>
+                <span>竖屏 · 原声 · 滑动切换 · 自动循环到音乐结束</span>
             </div>
         </div>
         <div class="modal-footer">
             <button class="btn btn-secondary" onclick="Ptu.ui.renderModal.close()">取消</button>
-            <button class="btn btn-accent" onclick="Ptu.ui.startRender()">渲染</button>
+            <button class="btn btn-accent" onclick="Ptu.ui.startRender()">生成视频</button>
         </div>
     </div>
 </div>
@@ -273,6 +276,31 @@
         <video id="lb-video" class="lightbox-media" controls style="display:none"></video>
     </div>
     <span id="lb-counter" class="lightbox-counter"></span>
+</div>
+
+<!-- First-run Disclaimer -->
+<div id="disclaimer-modal" class="modal-overlay hidden">
+    <div class="modal disclaimer-modal">
+        <div class="modal-header">
+            <h3>Ptu 使用前说明</h3>
+        </div>
+        <div class="modal-body disclaimer-body">
+            <p>Ptu 只用于保存你自己主动输入或复制的抖音作品素材，所有操作都应遵守平台规则、版权要求和账号安全边界。</p>
+            <ul>
+                <li>不做自动点赞、评论、关注、私信、发布、转发或收藏。</li>
+                <li>不绕过验证码、人机校验、风控页面或接口限制。</li>
+                <li>登录状态只保存在 Ptu 自己的本地目录，可随时退出登录或清除痕迹。</li>
+                <li>日志诊断包会脱敏，不应包含真实 cookie、密钥或环境变量。</li>
+            </ul>
+            <label class="checkbox-label disclaimer-check">
+                <input type="checkbox" id="disclaimer-check">
+                我已阅读并同意按上述边界使用 Ptu
+            </label>
+        </div>
+        <div class="modal-footer">
+            <button id="disclaimer-accept-btn" class="btn btn-accent" onclick="Ptu.ui.acceptDisclaimer()">同意并进入</button>
+        </div>
+    </div>
 </div>
 
 {% endblock %}

@@ -61,14 +61,14 @@ class DownloadProgress(BaseModel):
 
 
 class RenderOptions(BaseModel):
-    image_duration: float = 3.0      # 每张图片显示秒数
+    image_duration: float = 2.6      # 每张图片显示秒数
     transition: TransitionType = TransitionType.FADE
-    resolution: str = "1920x1080"
+    resolution: str = "1080x1920"
     fps: int = 30
     use_original_music: bool = True
     music_file: str | None = None    # 自定义音乐文件路径
-    live_photo_mode: str = "image"   # image | video | both
-    transition_duration: float = 0.7
+    live_photo_mode: str = "video"   # image | video | both
+    transition_duration: float = 0.28
 
 
 class TaskInfo(BaseModel):
@@ -119,3 +119,6 @@ class ProfileResult(BaseModel):
     avatar_url: str = ""
     posts: list[ProfilePost] = []
     total: int = 0
+    has_more: bool = False
+    next_cursor: int = 0
+    page_size: int = 30
