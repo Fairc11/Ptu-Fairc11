@@ -26,6 +26,8 @@ const Ptu = (() => {
         diagnosticPath: '',
         diagnosticFolder: '',
         douyinPanelVisible: false,
+        browserDockSyncTimer: null,
+        browserDockObserver: null,
     };
 
     // ── 全局粘贴监听（自动提取 URL 到当前聚焦的输入框） ──────────────
@@ -1211,18 +1213,26 @@ const Ptu = (() => {
         mountBrowserDock() {
             const host = document.getElementById('browser-native-host');
             if (!host || !desktop.isAvailable) return;
+            let mountedOnce = false;
             const sync = () => {
                 if (state.douyinPanelVisible) desktop.resizeDouyinPanel();
-                else desktop.mountDouyinPanel(false);
+                else if (!mountedOnce) {
+                    mountedOnce = true;
+                    desktop.mountDouyinPanel(false);
+                }
             };
+            if (state.browserDockSyncTimer) clearInterval(state.browserDockSyncTimer);
+            state.browserDockSyncTimer = setInterval(sync, 250);
             setTimeout(sync, 300);
+            setTimeout(sync, 900);
             if (window.ResizeObserver) {
-                const observer = new ResizeObserver(sync);
-                observer.observe(host);
-                observer.observe(document.body);
-            } else {
-                window.addEventListener('resize', sync);
+                if (state.browserDockObserver) state.browserDockObserver.disconnect();
+                state.browserDockObserver = new ResizeObserver(sync);
+                state.browserDockObserver.observe(host);
+                state.browserDockObserver.observe(document.body);
             }
+            window.addEventListener('resize', sync);
+            if (window.visualViewport) window.visualViewport.addEventListener('resize', sync);
         },
     };
 

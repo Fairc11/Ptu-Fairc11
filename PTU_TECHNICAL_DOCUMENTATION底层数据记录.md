@@ -2297,3 +2297,56 @@ installer\Ptu_Setup_v1.5.0.exe
 - `scripts\v1_5_installed_smoke_check.ps1 -InstallDir dist\Ptu -StartApp -WaitSeconds 90`：通过，安装版能启动并服务 `http://127.0.0.1:18080/`。
 - `dist\Ptu` 敏感文件审计：未发现 `.env`、`cookies.yaml`、`cookie.yaml`、`cookies.json`。
 - 最终安装包：`installer\Ptu_Setup_v1.5.0.exe`，380,168,689 字节，生成时间 2026-06-05 13:49:38。
+
+### 阶段 9.2：二测日志修复与右侧 Dock 同步（2026-06-10）
+
+用户回传 `C:\Users\ASUS\Desktop\日志.zip`，压缩包内核心日志位于 `日志/ptu.log`、`日志/ptu_boot.log` 和 `日志/runs/ptu_2026-06-05_140919.log`。本轮只抽取日志文件到外层 `_log_extract_20260610` 做排障，没有展开完整 522MB 运行目录。
+
+日志事实：
+
+- 安装版启动为 `Ptu v1.5.0`。
+- 二维码 API 直调返回 `status=403, type=application/octet-stream, body=路由已封禁` 后，切换内置 Chromium Playwright，并成功获取二维码；这是预期兜底路径，不判定为本轮 bug。
+- 抓取路径 2（f2 库）多次成功。
+- 下载阶段两次出现 `实况合成失败 live_0000 ... Conversion failed!`。随后 `app.media` 渲染仍成功，说明最终成片可用，但下载器生成备用 `live_0000.mp4` 的 FFmpeg concat 命令存在不稳点，且日志过短。
+
+修复内容：
+
+- `backend/app/desktop_douyin_panel.py`
+  - `NativeDouyinPanel` 增加 `_last_rect`，保存前端传入的右侧 Dock 坐标。
+  - 绑定 WinForms 主窗体 `Resize`、`SizeChanged`、`Move`，主窗口拖拽缩放或移动时重放最后边界，避免右侧 WebView2 子控件停在旧位置或旧尺寸。
+- `backend/app/static/js/app.js`
+  - `mountBrowserDock()` 增加 `browserDockSyncTimer`，右侧预览可见时持续把 `#browser-native-host` 坐标推给原生层。
+  - 不管浏览器是否支持 `ResizeObserver`，都额外监听 `window.resize`；支持 `visualViewport` 时也监听其 `resize`。
+- `backend/app/services/downloader.py`
+  - 下载阶段的实况备用合成统一为 `1080x1920`、`fps=30`、`settb=AVTB`、`force_divisible_by=2`、`yuv420p`，避免视频和静态图 concat 输入参数不一致。
+  - FFmpeg 失败时保留包含 `error`、`failed`、`invalid`、`do not match`、`conversion failed` 的有效错误行，避免日志只剩最后的 `Conversion failed!`。
+
+验证记录：
+
+```powershell
+python -m pytest tests/test_douyin_browser_panel.py tests/test_downloader_text_content.py -q
+# 13 passed
+
+python -m pytest tests/test_douyin_browser_panel.py tests/test_downloader_text_content.py tests/test_media_processor_douyin_clean.py tests/test_release_check.py -q
+# 27 passed
+
+python scripts/release_check.py
+# [OK] 发布检查通过
+```
+
+封包后验证：
+
+```text
+installer\Ptu_Setup_v1.5.0.exe
+大小：380,035,786 字节
+生成时间：2026-06-10 14:58:49
+
+dist\Ptu\Ptu.exe
+大小：198,918,052 字节
+生成时间：2026-06-10 14:54:10
+```
+
+- `scripts\v1_5_installed_smoke_check.ps1 -InstallDir dist\Ptu -StartApp -WaitSeconds 90`：通过，dist 版能启动并服务 `http://127.0.0.1:18080/`。
+- dist 敏感文件审计：未发现 `.env`、`cookies.yaml`、`cookie.yaml`、`cookies.json`。
+- dist 内容确认：`ffmpeg.exe`、`ffprobe.exe`、`THIRD_PARTY_NOTICES.md`、内置 Chromium headless shell 均存在；`_internal\ffmpeg.exe` 和 `_internal\ffprobe.exe` 不存在，避免重复打包。
+- 页面 DOM 检查：`#browser-dock`、`#browser-native-host`、`#browser-login-panel` 存在；“复制当前链接”不存在；“手动复制链接”存在；右侧 native host 在 viewport 从 `1400x900` 改到 `1200x760` 后从 `527x463.765625` 变为 `447x360`。

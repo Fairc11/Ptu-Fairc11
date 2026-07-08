@@ -54,9 +54,21 @@ def test_native_douyin_panel_intercepts_new_windows_inside_main_window():
 
     assert "WebView2" in source
     assert "self._form.Controls.Add(webview)" in source
+    assert "self._last_rect" in source
+    assert "self._form.Resize += self._on_form_layout_changed" in source
+    assert "self._form.Move += self._on_form_layout_changed" in source
     assert "core.NewWindowRequested += self._on_new_window" in source
     assert "args.Handled = True" in source
     assert "self._navigate(uri, force_reload=True)" in source
+
+
+def test_browser_dock_keeps_native_panel_synced_during_window_resize():
+    js = Path("backend/app/static/js/app.js").read_text(encoding="utf-8")
+
+    assert "browserDockSyncTimer" in js
+    assert "window.addEventListener('resize', sync)" in js
+    assert "window.visualViewport.addEventListener('resize', sync)" in js
+    assert "setInterval(sync" in js
 
 
 def test_first_run_disclaimer_is_present():

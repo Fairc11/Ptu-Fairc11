@@ -269,15 +269,27 @@ class DownloadManager:
         if sys.platform.startswith("win"):
             kwargs["creationflags"] = getattr(sp, "CREATE_NO_WINDOW", 0)
 
-        # 视频在前，图片定格 1.5 秒在后，concat 拼接
+        # 视频在前，图片定格 1.5 秒在后。两路输入先统一画布、帧率、时基和像素格式，
+        # 避免 FFmpeg concat 因宽高、SAR 或 timebase 不一致直接失败。
+        video_filter = (
+            "settb=AVTB,setpts=PTS-STARTPTS,fps=30,"
+            "scale=1080:1920:force_original_aspect_ratio=decrease:"
+            "force_divisible_by=2:flags=lanczos,"
+            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p"
+        )
+        image_filter = (
+            "settb=AVTB,setpts=PTS-STARTPTS,trim=duration=1.5,fps=30,"
+            "scale=1080:1920:force_original_aspect_ratio=decrease:"
+            "force_divisible_by=2:flags=lanczos,"
+            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p"
+        )
         cmd = [
             ffmpeg, "-y",
             "-i", video_path,
             "-loop", "1", "-t", "1.5", "-i", image_path,
             "-filter_complex",
-            # 统一缩放到偶数尺寸（libx264 要求），保持宽高比
-            "[0:v]setpts=PTS-STARTPTS,scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos,setsar=1[v0];"
-            "[1:v]setpts=PTS-STARTPTS,scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos,setsar=1[v1];"
+            f"[0:v]{video_filter}[v0];"
+            f"[1:v]{image_filter}[v1];"
             "[v0][v1]concat=n=2:v=1:a=0[v]",
             "-map", "[v]",
             "-c:v", "libx264", "-preset", "medium", "-crf", "18",
@@ -292,8 +304,24 @@ class DownloadManager:
             lambda: sp.run(cmd, **kwargs)
         )
         if result.returncode != 0:
-            err = result.stderr.split("\n")[-3:] if result.stderr else ["unknown"]
-            raise RuntimeError("; ".join(err))
+            raise RuntimeError(self._compact_ffmpeg_error(result.stderr))
+
+    @staticmethod
+    def _compact_ffmpeg_error(stderr: str | None) -> str:
+        if not stderr:
+            return "unknown"
+        lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+        useful = [
+            line for line in lines
+            if (
+                "error" in line.lower()
+                or "failed" in line.lower()
+                or "invalid" in line.lower()
+                or "do not match" in line.lower()
+                or "conversion failed" in line.lower()
+            )
+        ]
+        return "; ".join((useful or lines)[-6:])
 
     def _guess_extension(
         self,

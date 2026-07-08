@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from backend.app.models.schemas import LivePhotoSource, MediaType, ScrapeResult
@@ -185,3 +187,64 @@ async def test_image_download_uses_title_when_text_content_missing(tmp_path, mon
 
     assert (tmp_path / "post.txt").read_text(encoding="utf-8") == "只有标题也要保存"
     assert result["text_path"] == str(tmp_path / "post.txt")
+
+
+@pytest.mark.asyncio
+async def test_live_photo_synthesis_command_normalizes_video_for_ffmpeg(tmp_path, monkeypatch):
+    manager = DownloadManager()
+    image = tmp_path / "live_0000_img.jpg"
+    video = tmp_path / "live_0000_vid.mp4"
+    output = tmp_path / "live_0000.mp4"
+    image.write_bytes(b"fake-image")
+    video.write_bytes(b"fake-video")
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        output.write_bytes(b"fake-output")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    await manager._synthesize_live_photo(str(image), str(video), str(output))
+
+    command_text = " ".join(captured["cmd"])
+    assert "fps=30" in command_text
+    assert "format=yuv420p" in command_text
+    assert "settb=AVTB" in command_text
+    assert "force_divisible_by=2" in command_text
+    assert "pad=1080:1920" in command_text
+    assert captured["kwargs"]["encoding"] == "utf-8"
+    assert captured["kwargs"]["errors"] == "replace"
+
+
+@pytest.mark.asyncio
+async def test_live_photo_synthesis_error_keeps_actionable_ffmpeg_lines(tmp_path, monkeypatch):
+    manager = DownloadManager()
+    image = tmp_path / "live_0000_img.jpg"
+    video = tmp_path / "live_0000_vid.mp4"
+    output = tmp_path / "live_0000.mp4"
+    image.write_bytes(b"fake-image")
+    video.write_bytes(b"fake-video")
+
+    def fake_run(cmd, **kwargs):
+        stderr = "\n".join(
+            [
+                "ffmpeg version x",
+                "[Parsed_concat_5 @ 000001] Input link in0:v0 parameters do not match",
+                "Error while filtering: Invalid argument",
+                "Conversion failed!",
+            ]
+        )
+        return subprocess.CompletedProcess(cmd, 1, "", stderr)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await manager._synthesize_live_photo(str(image), str(video), str(output))
+
+    message = str(exc_info.value)
+    assert "Input link in0:v0 parameters do not match" in message
+    assert "Error while filtering: Invalid argument" in message
+    assert "Conversion failed!" in message

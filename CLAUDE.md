@@ -55,12 +55,14 @@
 - 日志导出改为脱敏诊断包，包含版本、路径、Chromium/FFmpeg 状态、下载目录、输出目录、任务记录和日志，不导出真实 cookie。
 - 应用图标已替换为新版 PTU 图标，`icon.ico` 用于 EXE/安装器，`backend/app/static/img/app-icon.png` 用于应用内标题栏和启动页。
 - 内置浏览改为主界面右侧常驻预览 Dock：桌面版在同一个主窗口内挂载原生 WebView2 子控件承载抖音，扫码登录在右侧内联显示，登录成功后同步 Ptu 自己的登录态并直接显示抖音；用户按教程手动点分享并复制链接，不再提供复制当前链接或自动填入单个/主页抓取。
+- 右侧抖音 Dock 的原生 WebView2 子控件必须随主窗口拖拽缩放同步位置和尺寸：前端持续上报 `#browser-native-host` 坐标，`NativeDouyinPanel` 保存最后坐标并监听 WinForms 主窗体 `Resize`、`SizeChanged`、`Move`。
+- 下载阶段的 `live_0000.mp4` 实况小视频合成必须先统一时基、帧率、1080x1920 画布和 `yuv420p`，避免 FFmpeg concat 输入不一致导致 `Conversion failed!`；失败日志必须保留有效错误行。
 - 生成视频直接输出到本次素材下载文件夹；右侧 UI 只能显示“已保存到素材文件夹/打开视频/打开文件夹/复制路径”，不要再写“下载生成视频”。
 - 单张实况照片或单张普通图片成片时不使用翻页转场，直接持续播放/显示到 BGM 结束；多素材才使用 `wipeleft` 翻页。
 - 首次启动必须显示免责声明，用户勾选同意后才能进入主界面。
 - 下载器必须支持普通图片和实况照片混在同一条抖音：真实图片+视频配对进 `live_photos`，无视频配对的图片进 `images`；WebP 转 JPG 后不要把转换前文件暴露成第二份素材。
 - 渲染日志必须能看到 `app.media` 记录的 FFmpeg 路径、素材数、实况视频数、音乐时长、循环次数和输出路径。
-- 阶段 9 已生成本地候选安装包 `installer\Ptu_Setup_v1.5.0.exe`（380,160,451 字节）；`dist\Ptu\Ptu.exe` 同级存在 `ffmpeg.exe`、`ffprobe.exe` 和 `THIRD_PARTY_NOTICES.md`，`_internal\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe` 已内置。
+- 2026-06-10 二测修复后已重新生成本地候选安装包 `installer\Ptu_Setup_v1.5.0.exe`（380,035,786 字节）；`dist\Ptu\Ptu.exe` 同级存在 `ffmpeg.exe`、`ffprobe.exe` 和 `THIRD_PARTY_NOTICES.md`，`_internal\ms-playwright\chromium_headless_shell-1217\chrome-headless-shell-win64\chrome-headless-shell.exe` 已内置。
 - 用户测试确认前不要提交、打 tag、上传 GitHub Release 或替换线上资产。
 
 ## v1.4.1 更新记录

@@ -142,6 +142,8 @@ installer.iss                Inno Setup 安装器配置
 - 修复下载素材、生成视频、FFprobe 探测等子进程在 Windows 打包态反复闪命令行窗口的问题。
 - 修复实况照片识别过宽导致普通图片被当作实况照片、WebP/JPG 重复暴露的问题。
 - 修复普通视频和实况短视频可能被错误保存为 `.jpg` 的问题。
+- 修复右侧抖音预览在主窗口拖拽缩放时不跟随 Dock 区域变化的问题：前端持续同步右侧区域坐标，原生 WebView2 子控件也监听主窗口移动和尺寸变化。
+- 修复下载阶段 `live_0000.mp4` 实况合成偶发 `Conversion failed!` 且日志过短的问题：合成前统一时基、帧率、画布、像素格式，并保留 FFmpeg 有效错误行。
 
 **优化**
 
@@ -159,7 +161,7 @@ installer.iss                Inno Setup 安装器配置
 
 **验证**
 
-- `python -m pytest tests -q`：`68 passed`
+- `python -m pytest tests -q`：二测修复后 `71 passed`
 - `python scripts\release_check.py`：通过
 - `python -m compileall -q run.py desktop_app.py setup_check.py backend\app scripts tests`：通过
 - `node --check backend\app\static\js\app.js`：通过

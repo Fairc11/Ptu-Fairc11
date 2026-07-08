@@ -48,6 +48,8 @@ class NativeDouyinPanel:
         self._ready = threading.Event()
         self._current_url = "https://www.douyin.com/"
         self._visible = False
+        self._last_rect: dict[str, float] | None = None
+        self._form_events_bound = False
 
     @property
     def available(self) -> bool:
@@ -129,14 +131,10 @@ class NativeDouyinPanel:
         y = float(rect.get("y") or 0)
         width = max(1, float(rect.get("width") or 1))
         height = max(1, float(rect.get("height") or 1))
+        self._last_rect = {"x": x, "y": y, "width": width, "height": height}
 
         def _set():
-            scale = float(getattr(self._form, "_scale", 1.0) or 1.0)
-            self._webview.Left = int(x * scale)
-            self._webview.Top = int(y * scale)
-            self._webview.Width = int(width * scale)
-            self._webview.Height = int(height * scale)
-            self._webview.BringToFront()
+            self._apply_bounds(self._last_rect)
 
         self._invoke(_set)
         return {"status": "ok"}
@@ -187,6 +185,7 @@ class NativeDouyinPanel:
             self._form.Controls.Add(webview)
             webview.BringToFront()
             self._webview = webview
+            self._bind_form_events()
 
             def _ready(sender, args):
                 if not args.IsSuccess:
@@ -210,6 +209,25 @@ class NativeDouyinPanel:
 
         self._invoke(_create)
         self._ready.wait(20)
+
+    def _bind_form_events(self) -> None:
+        if self._form_events_bound or self._form is None:
+            return
+        self._form.Resize += self._on_form_layout_changed
+        self._form.SizeChanged += self._on_form_layout_changed
+        self._form.Move += self._on_form_layout_changed
+        self._form_events_bound = True
+
+    def _apply_bounds(self, rect: dict[str, float] | None) -> None:
+        if not rect or self._webview is None or self._form is None:
+            return
+        scale = float(getattr(self._form, "_scale", 1.0) or 1.0)
+        self._webview.Left = int(float(rect.get("x") or 0) * scale)
+        self._webview.Top = int(float(rect.get("y") or 0) * scale)
+        self._webview.Width = max(1, int(float(rect.get("width") or 1) * scale))
+        self._webview.Height = max(1, int(float(rect.get("height") or 1) * scale))
+        if self._visible:
+            self._webview.BringToFront()
 
     def _navigate(self, url: str, *, force_reload: bool) -> None:
         safe_url = _normalize_douyin_url(url)
@@ -237,6 +255,13 @@ class NativeDouyinPanel:
         if self._form.InvokeRequired:
             return self._form.Invoke(Func[Type](func))
         return func()
+
+    def _on_form_layout_changed(self, _sender, _args):
+        try:
+            if self._visible and self._last_rect:
+                self._apply_bounds(self._last_rect)
+        except Exception:
+            pass
 
     def _on_source_changed(self, sender, _args):
         try:
