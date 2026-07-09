@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ptu - Windows 桌面客户端
+Ptu - 桌面客户端
 """
 from __future__ import annotations
 import os
@@ -32,16 +32,31 @@ if sys.stdout and sys.stdout.encoding != "utf-8":
     except Exception:
         pass
 
-if getattr(sys, 'frozen', False):
-    STATE_FILE = Path(sys.executable).parent / ".ptu_window_state.json"
-else:
-    STATE_FILE = Path(__file__).parent / ".ptu_window_state.json"
+def _desktop_runtime_dir() -> Path:
+    configured = os.environ.get("PTU_RUNTIME_DIR")
+    if configured:
+        return Path(configured)
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Ptu"
+    if sys.platform.startswith("win"):
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "Ptu"
+        return Path.home() / "AppData" / "Local" / "Ptu"
+    return Path.home() / ".local" / "share" / "Ptu"
+
+
+def _window_state_file() -> Path:
+    if getattr(sys, "frozen", False):
+        return _desktop_runtime_dir() / "ptu_window_state.json"
+    return Path(__file__).parent / ".ptu_window_state.json"
 
 
 def _load_window_state() -> dict:
     try:
-        if STATE_FILE.exists():
-            return json.loads(STATE_FILE.read_text("utf-8"))
+        state_file = _window_state_file()
+        if state_file.exists():
+            return json.loads(state_file.read_text("utf-8"))
     except Exception:
         pass
     return {"w": 1200, "h": 800, "x": None, "y": None, "maximized": False}
@@ -49,7 +64,9 @@ def _load_window_state() -> dict:
 
 def _save_window_state(state: dict):
     try:
-        STATE_FILE.write_text(json.dumps(state, ensure_ascii=False), "utf-8")
+        state_file = _window_state_file()
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(state, ensure_ascii=False), "utf-8")
     except Exception:
         pass
 
@@ -63,6 +80,14 @@ def find_free_port(start: int = 18080, end: int = 18180) -> int:
             except OSError:
                 continue
     return start
+
+
+def _desktop_platform_label() -> str:
+    if sys.platform == "darwin":
+        return "Mac 桌面客户端"
+    if sys.platform.startswith("win"):
+        return "Windows 桌面客户端"
+    return "桌面客户端"
 
 
 class DesktopApp:
@@ -127,6 +152,17 @@ class DesktopApp:
             self.window.restore()
         except Exception:
             pass
+
+    def _webview_start_kwargs(self, tray_menu: list) -> dict:
+        kwargs = {
+            "debug": False,
+            "http_server": False,
+            "private_mode": False,
+            "storage_path": str(Path.home() / ".ptu"),
+        }
+        if sys.platform.startswith("win"):
+            kwargs["menu"] = tray_menu
+        return kwargs
 
     def run(self):
         import webview
@@ -201,13 +237,7 @@ class DesktopApp:
         except Exception:
             pass
 
-        webview.start(
-            debug=False,
-            http_server=False,
-            private_mode=False,
-            storage_path=str(cache_dir),
-            menu=tray_menu,
-        )
+        webview.start(**self._webview_start_kwargs(tray_menu))
 
         # 窗口关闭后保存状态
         self._save_current_window_state()
@@ -217,7 +247,7 @@ class DesktopApp:
 def main():
     print("=" * 50)
     from backend.app.version import VERSION
-    print(f"  {VERSION} - Windows 桌面客户端")
+    print(f"  {VERSION} - {_desktop_platform_label()}")
     print("=" * 50)
     print()
 

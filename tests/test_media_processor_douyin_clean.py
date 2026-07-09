@@ -189,6 +189,31 @@ def test_media_subprocess_kwargs_hide_windows_console(monkeypatch):
     assert "creationflags" in kwargs
 
 
+def test_probe_duration_uses_sibling_ffprobe_without_exe_on_macos(tmp_path, monkeypatch):
+    ffmpeg = tmp_path / "ffmpeg"
+    ffprobe = tmp_path / "ffprobe"
+    music = tmp_path / "music.mp3"
+    ffmpeg.write_text("", encoding="utf-8")
+    ffprobe.write_text("", encoding="utf-8")
+    music.write_bytes(b"fake-music")
+
+    processor = MediaProcessor()
+    processor.ffmpeg = str(ffmpeg)
+    captured = {}
+
+    def fake_run(cmd, timeout):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, "8.5\n", "")
+
+    monkeypatch.setattr("backend.app.services.media_processor.sys.platform", "darwin")
+    monkeypatch.setattr(processor, "_run_media_command", fake_run)
+
+    duration = processor._probe_duration(str(music))
+
+    assert duration == 8.5
+    assert captured["cmd"][0] == str(ffprobe)
+
+
 def test_live_photo_and_downloader_subprocesses_hide_windows_console():
     live_photo_source = __import__(
         "backend.app.services.live_photo", fromlist=["dummy"]

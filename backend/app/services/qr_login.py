@@ -8,6 +8,7 @@ import asyncio
 import yaml
 import logging
 import time
+import sys
 from pathlib import Path
 
 
@@ -31,6 +32,15 @@ def _find_chromium() -> str | None:
                     if found:
                         return str(found[0])
     return None
+
+
+def _default_playwright_browsers_path() -> Path:
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Caches" / "ms-playwright"
+    if sys.platform.startswith("win"):
+        return home / "AppData" / "Local" / "ms-playwright"
+    return home / ".cache" / "ms-playwright"
 
 
 _SSO_PARAMS = {
@@ -175,7 +185,7 @@ class QRLoginService:
         """通过 Playwright 获取二维码。"""
         from playwright.async_api import async_playwright
 
-        browsers_dir = str(Path.home() / "AppData" / "Local" / "ms-playwright")
+        browsers_dir = str(_default_playwright_browsers_path())
         os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", browsers_dir)
 
         self._playwright = await async_playwright().start()

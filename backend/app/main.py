@@ -307,8 +307,10 @@ def _create_diagnostic_package() -> Path:
         chromium_path = f"检测失败: {exc}"
 
     ffmpeg_path = Path(settings.ffmpeg_path)
-    ffprobe_path = ffmpeg_path.with_name("ffprobe.exe") if ffmpeg_path.name else Path("ffprobe.exe")
-    cookies_exists = settings.cookies_path.exists()
+    ffprobe_name = "ffprobe.exe" if sys.platform.startswith("win") else "ffprobe"
+    ffprobe_path = ffmpeg_path.with_name(ffprobe_name) if ffmpeg_path.name else Path(ffprobe_name)
+    cookies_path = Path(settings.cookies_path)
+    cookies_exists = cookies_path.exists()
     diagnostic = "\n".join([
         f"Ptu version: {VERSION}",
         f"Python frozen: {bool(getattr(sys, 'frozen', False))}",
@@ -447,7 +449,13 @@ async def open_folder(task_id: str):
         folder = Path(f)
         if folder.is_file():
             folder = folder.parent
-        subprocess.Popen(["explorer", str(folder)])
+        import sys
+        if sys.platform.startswith("win"):
+            subprocess.Popen(["explorer", str(folder)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(folder)])
+        else:
+            subprocess.Popen(["xdg-open", str(folder)])
         opened.append(str(folder))
     return {"opened": opened}
 

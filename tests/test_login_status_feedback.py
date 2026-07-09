@@ -6,7 +6,7 @@ import time
 import pytest
 
 from backend.app.services.scraper import DouyinScraper
-from backend.app.services.qr_login import QRLoginService, _hidden_browser_args
+from backend.app.services.qr_login import QRLoginService, _default_playwright_browsers_path, _hidden_browser_args
 
 
 def test_qr_login_status_mapping_is_user_visible(tmp_path):
@@ -55,6 +55,19 @@ def test_qr_browser_fallback_is_forced_hidden():
     assert "--headless=new" in args
     assert "--window-position=-32000,-32000" in args
     assert "--window-size=1,1" in args
+
+
+def test_qr_playwright_default_browser_path_is_platform_specific(monkeypatch):
+    import backend.app.services.qr_login as qr_login
+
+    monkeypatch.setattr(qr_login.sys, "platform", "darwin")
+    mac_path = _default_playwright_browsers_path()
+
+    monkeypatch.setattr(qr_login.sys, "platform", "win32")
+    win_path = _default_playwright_browsers_path()
+
+    assert mac_path == Path.home() / "Library" / "Caches" / "ms-playwright"
+    assert win_path == Path.home() / "AppData" / "Local" / "ms-playwright"
 
 
 @pytest.mark.asyncio

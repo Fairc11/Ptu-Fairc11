@@ -6,6 +6,7 @@ Handles path resolution for both development and packaged (PyInstaller) environm
 from __future__ import annotations
 import os
 import sys
+import shutil
 from pathlib import Path
 import yaml
 from pydantic_settings import BaseSettings
@@ -27,17 +28,37 @@ def _get_runtime_dir() -> Path:
         configured = os.environ.get("PTU_RUNTIME_DIR")
         if configured:
             return Path(configured)
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "Ptu"
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
             return Path(local_app_data) / "Ptu"
-        return Path.home() / "AppData" / "Local" / "Ptu"
+        if sys.platform.startswith("win"):
+            return Path.home() / "AppData" / "Local" / "Ptu"
+        return Path.home() / ".local" / "share" / "Ptu"
     return _get_base_dir()
 
 
+def _ffmpeg_names() -> list[str]:
+    if sys.platform.startswith("win"):
+        return ["ffmpeg.exe", "ffmpeg"]
+    return ["ffmpeg"]
+
+
+def _is_usable_ffmpeg_path(path: Path) -> bool:
+    if path.name.lower().endswith(".exe") and not sys.platform.startswith("win"):
+        return False
+    if not path.exists():
+        return False
+    if sys.platform.startswith("win"):
+        return True
+    return os.access(path, os.X_OK)
+
+
 def _find_ffmpeg() -> str:
-    """Search for ffmpeg.exe in common locations."""
-    # Check PATH first
+    """Search for a platform-usable FFmpeg executable."""
     ffmpeg = "ffmpeg"
+    names = _ffmpeg_names()
 
     # Common install paths
     search_paths = [
@@ -52,12 +73,24 @@ def _find_ffmpeg() -> str:
     # In frozen mode, also search alongside the exe
     if getattr(sys, 'frozen', False):
         search_paths.insert(0, Path(sys.executable).parent)
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            search_paths.insert(0, Path(meipass))
+    elif not sys.platform.startswith("win"):
+        found = shutil.which("ffmpeg")
+        if found:
+            return found
 
     for base in search_paths:
-        for pattern in ["ffmpeg.exe", "ffmpeg"]:
+        for pattern in names:
             candidates = list(base.rglob(pattern))
-            if candidates:
-                return str(candidates[0])
+            usable = [candidate for candidate in candidates if _is_usable_ffmpeg_path(candidate)]
+            if usable:
+                return str(usable[0])
+
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
 
     return ffmpeg
 
@@ -121,7 +154,7 @@ class Settings(BaseSettings):
         s.cookies_path = str(_resolve_path(Path(s.cookies_path), runtime_base))
 
         # Auto-detect FFmpeg if not found
-        if s.ffmpeg_path == "ffmpeg" or not Path(s.ffmpeg_path).exists():
+        if s.ffmpeg_path == "ffmpeg" or not _is_usable_ffmpeg_path(Path(s.ffmpeg_path)):
             s.ffmpeg_path = _find_ffmpeg()
 
         return s

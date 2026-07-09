@@ -28,10 +28,14 @@ def get_runtime_dir() -> Path:
         configured = os.environ.get("PTU_RUNTIME_DIR")
         if configured:
             return Path(configured)
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "Ptu"
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
             return Path(local_app_data) / "Ptu"
-        return Path.home() / "AppData" / "Local" / "Ptu"
+        if sys.platform.startswith("win"):
+            return Path.home() / "AppData" / "Local" / "Ptu"
+        return Path.home() / ".local" / "share" / "Ptu"
     return Path(__file__).parent.parent.parent
 
 

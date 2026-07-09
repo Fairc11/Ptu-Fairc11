@@ -28,6 +28,7 @@ const Ptu = (() => {
         douyinPanelVisible: false,
         browserDockSyncTimer: null,
         browserDockObserver: null,
+        titlebarDragBound: false,
     };
 
     // ── 全局粘贴监听（自动提取 URL 到当前聚焦的输入框） ──────────────
@@ -163,6 +164,13 @@ const Ptu = (() => {
         close()   { if (desktop.isAvailable) window.pywebview.api.close_window(); },
         startDrag() { if (desktop.isAvailable) window.pywebview.api.start_titlebar_drag(); },
         openInExplorer(path) { if (desktop.isAvailable) window.pywebview.api.open_in_explorer(path); },
+        openExternalUrl(url) {
+            if (!desktop.isAvailable || !window.pywebview.api.open_external_url) {
+                window.open(url, '_blank', 'noopener');
+                return Promise.resolve({status: 'ok', url});
+            }
+            return window.pywebview.api.open_external_url(url || '');
+        },
         notify(title, msg) { if (desktop.isAvailable) window.pywebview.api.show_notification(title, msg); },
         _dockRect() {
             const host = document.getElementById('browser-native-host');
@@ -446,6 +454,27 @@ const Ptu = (() => {
 
     // ── UI Components ──────────────────────────────────────────────────
     const ui = {
+        _isMacLike() {
+            const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+            return /Mac|iPhone|iPad|iPod/.test(platform);
+        },
+
+        _pasteShortcutLabel() {
+            return ui._isMacLike() ? '⌘V' : 'Ctrl+V';
+        },
+
+        bindTitlebarDrag() {
+            const titlebar = document.getElementById('custom-titlebar');
+            if (!titlebar || !desktop.isAvailable || state.titlebarDragBound) return;
+            state.titlebarDragBound = true;
+            titlebar.addEventListener('pointerdown', e => {
+                if (e.button !== 0) return;
+                if (e.pointerType === 'touch') return;
+                if (e.target.closest('#titlebar-controls, button, input, textarea, select, a')) return;
+                desktop.startDrag();
+            });
+        },
+
         _browserInputUrl() {
             const input = document.getElementById('browser-url-input');
             return normalizeDouyinUrl(input ? input.value : '');
@@ -517,6 +546,12 @@ const Ptu = (() => {
                     ui._setBrowserDockState('浏览中');
                     ui._setBrowserStatus('抖音已在右侧内置浏览区打开。请在抖音页面里手动点分享并复制链接。');
                     toast.success('已在右侧内置浏览区打开抖音');
+                } else if (d.status === 'unsupported') {
+                    state.douyinPanelVisible = false;
+                    await desktop.openExternalUrl(d.url || url);
+                    ui._setBrowserDockState('Mac 外部浏览器');
+                    ui._setBrowserStatus('Mac V1.5 版暂不支持内嵌抖音预览，已改用系统浏览器打开。复制链接后粘贴到左侧抓取框。');
+                    toast.info('已在系统浏览器打开抖音');
                 } else {
                     ui._setBrowserDockState('打开失败');
                     ui._setBrowserStatus('内置浏览区打开失败，可使用系统浏览器手动复制链接。');
@@ -604,7 +639,7 @@ const Ptu = (() => {
             }
 
             // 都失败
-            toast.info('请按 Ctrl+V 粘贴到输入框');
+            toast.info(`请按 ${ui._pasteShortcutLabel()} 粘贴到输入框`);
         },
 
         pasteUrl() {
@@ -1243,6 +1278,7 @@ const Ptu = (() => {
             ui.updateLogin(d);
         }).catch(() => {});
         ui.showDisclaimerIfNeeded();
+        ui.bindTitlebarDrag();
         ui.mountBrowserDock();
 
         // Event listeners

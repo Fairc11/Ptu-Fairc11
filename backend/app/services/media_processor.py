@@ -195,9 +195,12 @@ class MediaProcessor:
         ffprobe = "ffprobe"
         ffmpeg_path = Path(self.ffmpeg)
         if ffmpeg_path.name:
-            candidate = ffmpeg_path.with_name("ffprobe.exe")
-            if candidate.exists():
-                ffprobe = str(candidate)
+            names = ["ffprobe.exe", "ffprobe"] if sys.platform.startswith("win") else ["ffprobe"]
+            for name in names:
+                candidate = ffmpeg_path.with_name(name)
+                if candidate.exists():
+                    ffprobe = str(candidate)
+                    break
         result = self._run_media_command(
             [
                 ffprobe, "-v", "error",

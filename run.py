@@ -8,6 +8,7 @@ import os
 import sys
 import subprocess
 import threading
+import signal
 from pathlib import Path
 
 os.environ.setdefault("PYTHONUTF8", "1")
@@ -20,15 +21,34 @@ if getattr(sys, 'frozen', False):
         os.environ["REQUESTS_CA_BUNDLE"] = str(_cacert)
 
 _frozen = getattr(sys, 'frozen', False)
+
+
+def _default_runtime_dir() -> Path:
+    configured = os.environ.get("PTU_RUNTIME_DIR")
+    if configured:
+        return Path(configured)
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Ptu"
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "Ptu"
+    if sys.platform.startswith("win"):
+        return Path.home() / "AppData" / "Local" / "Ptu"
+    return Path.home() / ".local" / "share" / "Ptu"
+
+
 if _frozen:
-    _runtime_root = Path(os.environ.get("PTU_RUNTIME_DIR", "") or Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Ptu")
-    os.environ.setdefault("PTU_RUNTIME_DIR", str(_runtime_root))
+    os.environ.setdefault("PTU_RUNTIME_DIR", str(_default_runtime_dir()))
 
 from backend.app.version import VERSION
 
 
 def _should_run_setup(check_playwright, check_ffmpeg) -> bool:
     return (not check_playwright()) or (not check_ffmpeg())
+
+
+def _is_web_mode(argv: list[str]) -> bool:
+    return any(arg in ("--web", "-w") for arg in argv[1:])
 
 
 def _get_boot_log_dir() -> Path:
@@ -39,6 +59,18 @@ def _get_boot_log_dir() -> Path:
 
 def _kill_port(port: int):
     try:
+        if not sys.platform.startswith("win"):
+            result = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for pid in result.stdout.splitlines():
+                if pid.strip():
+                    os.kill(int(pid.strip()), signal.SIGTERM)
+            return
+
         output = subprocess.check_output(
             f"netstat -ano | findstr :{port}",
             shell=True, text=True, timeout=5
@@ -85,6 +117,15 @@ def main():
                 t.start()
     except Exception as e:
         _log(f"[Ptu] setup_check 跳过: {e}")
+
+    if _is_web_mode(sys.argv):
+        _log("[Ptu] Web 模式启动")
+        _log("[Ptu] 正在导入 backend.app.main...")
+        from backend.app.main import app
+        _log("[Ptu] app 导入成功，启动 uvicorn...")
+        import uvicorn
+        uvicorn.run(app, host="127.0.0.1", port=8000, reload=False, log_level="info")
+        return
 
     # 尝试桌面模式
     try:

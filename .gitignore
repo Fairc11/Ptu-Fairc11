@@ -27,6 +27,8 @@ build/
 installer/
 # .spec 已跟踪，排除构建生成的同名文件
 *.spec
+!build.spec
+!build_macos.spec
 # PyInstaller 中间包
 *.pkg
 # PyInstaller 中间文件
@@ -40,6 +42,7 @@ releases/
 备份_*/
 
 # ── Python 缓存 ──────────────────────────────
+.venv/
 __pycache__/
 *.pyc
 *.pyo

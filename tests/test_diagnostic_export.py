@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import zipfile
+import sys
 from pathlib import Path
 
 from backend.app.main import _redact_diagnostic_text, _zip_tree
+from backend.app import log_config, main
 
 
 def test_diagnostic_log_export_redacts_cookie_values():
@@ -50,3 +52,44 @@ def test_diagnostic_package_uses_fast_zip_storage():
 
     assert "ZIP_STORED" in source
     assert "avoids long" in source
+
+
+def test_diagnostic_package_accepts_string_cookies_path(tmp_path, monkeypatch):
+    log_dir = tmp_path / "日志"
+    runs_dir = log_dir / "runs"
+    exports_dir = log_dir / "exports"
+    downloads_dir = tmp_path / "data" / "downloads"
+    output_dir = tmp_path / "data" / "output"
+    tasks_db = tmp_path / "data" / "tasks.json"
+    run_log = runs_dir / "ptu_test.log"
+
+    runs_dir.mkdir(parents=True)
+    downloads_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    tasks_db.parent.mkdir(parents=True, exist_ok=True)
+    tasks_db.write_text("[]", encoding="utf-8")
+    run_log.write_text("Cookie: sessionid=secret", encoding="utf-8")
+
+    monkeypatch.setattr(log_config, "LOG_DIR", log_dir)
+    monkeypatch.setattr(log_config, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(log_config, "EXPORTS_DIR", exports_dir)
+    monkeypatch.setattr(log_config, "get_current_run_log", lambda: run_log)
+    monkeypatch.setattr(main.settings, "download_dir", downloads_dir)
+    monkeypatch.setattr(main.settings, "output_dir", output_dir)
+    monkeypatch.setattr(main.settings, "tasks_db", tasks_db)
+    monkeypatch.setattr(main.settings, "ffmpeg_path", str(tmp_path / "ffmpeg"))
+    monkeypatch.setattr(main.settings, "cookies_path", str(tmp_path / "cookies.yaml"))
+
+    zip_path = main._create_diagnostic_package()
+
+    assert zip_path.exists()
+    with zipfile.ZipFile(zip_path) as zf:
+        names = set(zf.namelist())
+        diagnostic = zf.read("diagnostic.txt").decode("utf-8")
+        run_log_text = zf.read("logs/ptu_test.log").decode("utf-8")
+
+    assert "diagnostic.txt" in names
+    assert "Cookies file exists: False" in diagnostic
+    if not sys.platform.startswith("win"):
+        assert "ffprobe.exe" not in diagnostic
+    assert "secret" not in run_log_text

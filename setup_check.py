@@ -16,10 +16,14 @@ def _get_runtime_dir() -> Path:
         configured = os.environ.get("PTU_RUNTIME_DIR")
         if configured:
             return Path(configured)
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "Ptu"
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
             return Path(local_app_data) / "Ptu"
-        return Path.home() / "AppData" / "Local" / "Ptu"
+        if sys.platform.startswith("win"):
+            return Path.home() / "AppData" / "Local" / "Ptu"
+        return Path.home() / ".local" / "share" / "Ptu"
     return Path(__file__).parent
 
 
@@ -75,6 +79,8 @@ def _get_playwright_browsers_dirs() -> list[Path]:
         candidates.append(bundled)
     candidates.extend([
         home / "AppData" / "Local" / "ms-playwright",
+        home / "Library" / "Caches" / "ms-playwright",
+        home / ".cache" / "ms-playwright",
         home / ".playwright",
     ])
     return candidates
@@ -84,6 +90,8 @@ def _get_playwright_browsers_dir() -> Path:
     """获取默认 Playwright 浏览器安装目录。"""
     candidates = [
         Path.home() / "AppData" / "Local" / "ms-playwright",
+        Path.home() / "Library" / "Caches" / "ms-playwright",
+        Path.home() / ".cache" / "ms-playwright",
         Path.home() / ".playwright",
     ]
     for c in candidates:
@@ -102,10 +110,15 @@ def get_chromium_path() -> str | None:
             if item.is_dir() and ("chromium" in name or "chrome" in name):
                 for exe in [
                     "chrome-headless-shell.exe",
+                    "chrome-headless-shell",
                     "headless_shell.exe",
+                    "headless_shell",
                     "chromium-headless-shell.exe",
+                    "chromium-headless-shell",
                     "chrome.exe",
+                    "chrome",
                     "chromium.exe",
+                    "chromium",
                 ]:
                     found = list(item.rglob(exe))
                     if found:
@@ -301,17 +314,28 @@ def install_playwright():
 
 def check_ffmpeg() -> bool:
     """检查 FFmpeg 是否可用。"""
+    names = ["ffmpeg.exe", "ffmpeg"] if sys.platform.startswith("win") else ["ffmpeg"]
+    def _local_ffmpeg_ready(path: Path) -> bool:
+        if not path.exists():
+            return False
+        if sys.platform.startswith("win"):
+            return True
+        return os.access(path, os.X_OK)
+
     # 封包后优先检查用户可写运行目录，其次检查 exe 同级目录
     if getattr(sys, 'frozen', False):
-        if (_get_runtime_dir() / "ffmpeg.exe").exists():
-            return True
-        if (Path(sys.executable).parent / "ffmpeg.exe").exists():
-            return True
+        meipass = getattr(sys, "_MEIPASS", None)
+        for name in names:
+            if meipass and _local_ffmpeg_ready(Path(meipass) / name):
+                return True
+            if _local_ffmpeg_ready(_get_runtime_dir() / name):
+                return True
+            if _local_ffmpeg_ready(Path(sys.executable).parent / name):
+                return True
     # 检查当前目录
-    if (Path("ffmpeg.exe")).exists():
-        return True
-    if (Path("ffmpeg")).exists():
-        return True
+    for name in names:
+        if _local_ffmpeg_ready(Path(name)):
+            return True
     # 检查 PATH
     code, _ = _run_cmd(["ffmpeg", "-version"])
     return code == 0
@@ -319,6 +343,10 @@ def check_ffmpeg() -> bool:
 
 def install_ffmpeg():
     """自动下载 FFmpeg。"""
+    if not sys.platform.startswith("win"):
+        print("[!] Mac/Linux 版不下载 Windows ffmpeg.exe；请使用包内 FFmpeg 或系统 FFmpeg。")
+        return False
+
     print()
     _print_box("安装 FFmpeg", [
         "Ptu 需要 FFmpeg 来处理视频",

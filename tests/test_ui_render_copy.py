@@ -35,3 +35,31 @@ def test_progress_and_browser_copy_ui_match_v15_polish():
     assert "login-modal" not in html
     assert "copyBrowserUrl" not in js
     assert "force_reload=True" not in js
+
+
+def test_frontend_uses_platform_aware_paste_hint_and_pointer_titlebar_drag():
+    html = Path("backend/app/templates/base.html").read_text(encoding="utf-8")
+    js = Path("backend/app/static/js/app.js").read_text(encoding="utf-8")
+
+    assert 'onmousedown="if (event.button === 0) Ptu.desktop.startDrag()"' not in html
+    assert "bindTitlebarDrag" in js
+    assert "pointerdown" in js
+    assert "e.button !== 0" in js
+    assert "e.pointerType === 'touch'" in js
+    assert "_pasteShortcutLabel" in js
+    assert "⌘V" in js
+    assert "请按 Ctrl+V 粘贴到输入框" not in js
+
+
+def test_frontend_treats_mac_unsupported_douyin_panel_as_external_browser_flow():
+    js = Path("backend/app/static/js/app.js").read_text(encoding="utf-8")
+
+    assert "openExternalUrl" in js
+    assert "d.status === 'unsupported'" in js
+    assert "Mac V1.5 版暂不支持内嵌抖音预览" in js
+
+
+def test_button_css_rule_is_not_nested_inside_duplicate_selector():
+    css = Path("backend/app/static/css/app.css").read_text(encoding="utf-8")
+
+    assert ".btn {\n.btn {" not in css
