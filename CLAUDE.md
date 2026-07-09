@@ -8,9 +8,11 @@
 
 1. `docs/superpowers/plans/2026-06-03-ptu-risk-control-policy.md`
 2. 本文件 `CLAUDE.md`
-3. `PTU_TECHNICAL_DOCUMENTATION底层数据记录.md`
-4. `docs/superpowers/plans/2026-06-03-ptu-v1.5-zero-prerequisites.md`
-5. `docs/superpowers/plans/2026-06-03-ptu-v1.5-douyin-slideshow-feedback.md`
+3. `README.md`
+4. `docs/v1.5_completion_audit.md`
+5. `docs/superpowers/plans/2026-07-09-ptu-v1.5-mac-port.md`
+6. `docs/superpowers/plans/2026-06-03-ptu-v1.5-zero-prerequisites.md`
+7. `docs/superpowers/plans/2026-06-03-ptu-v1.5-douyin-slideshow-feedback.md`
 
 风险红线文件优先级最高。若便利功能与风险红线冲突，必须先向用户说明风险，并改成低风险方案。
 
@@ -84,8 +86,6 @@
 ## 启动方式
 
 ```bash
-双击 桌面 Ptu 桌面版.lnk     # 桌面客户端模式（默认，推荐）
-双击 启动桌面版.bat            # 开发模式（需要 Python 环境）
 python run.py                  # 同上
 python run.py --web            # Web模式（浏览器访问 http://127.0.0.1:8000，仅开发）
 ```
@@ -104,28 +104,9 @@ python run.py --web            # Web模式（浏览器访问 http://127.0.0.1:80
 ├── installer.iss          # Inno Setup 安装脚本
 ├── icon.ico               # 应用图标
 ├── CLAUDE.md              # 项目说明（本文件）
-├── PTU_TECHNICAL_DOCUMENTATION底层数据记录.md  # 技术文档+完整工作痕迹
+├── README.md              # 用户说明、下载入口和版本日志
+├── docs/                  # 发布检查、风险策略、阶段计划和审计记录
 ├── .gitignore             # Git 忽略规则
-├── 启动桌面版.bat          # 开发模式快速启动
-├── 开发模式（热重载）.bat   # 热重载模式
-├── 一键启动.bat            # 快速启动
-├── 安装必要组件.bat        # 依赖安装
-├── releases/
-│   ├── 1.0.0/
-│   │   └── Ptu.exe
-│   ├── 1.1.0/
-│   │   └── Ptu.exe
-│   ├── 1.2.0/
-│   │   └── Ptu.exe
-│   ├── 1.3.0/
-│   │   └── Ptu_v1.3.0.zip
-│   └── 1.4.0/
-│       ├── Ptu/                  # --onedir 裸目录
-│       │   ├── Ptu.exe
-│       │   └── _internal/
-│       └── Ptu_v1.4.0_YYYYMMDD.zip  # 分发用 ZIP
-├── installer/
-│   └── Ptu_Setup_v1.5.0.exe      # v1.5 候选安装包，用户确认前不要发布
 ├── backend/
 │   ├── app/
 │   │   ├── main.py        # FastAPI主应用
