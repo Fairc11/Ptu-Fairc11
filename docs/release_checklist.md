@@ -4,7 +4,7 @@
 
 ## 1. 开发前规则
 
-- 先读根目录 `CLAUDE.md` 和 `github-ptu/PTU_TECHNICAL_DOCUMENTATION底层数据记录.md`。
+- 先读根目录 `CLAUDE.md`、`README.md`、`docs/v1.5_completion_audit.md` 和对应平台迁移/发布计划。
 - 抖音主页抓取优先走 API/f2 路线，不要重新堆 Playwright WAF 对抗参数；历史记录已经证明那是概率游戏。
 - 修 bug 先写能复现问题的测试或探针，再改代码。
 - 涉及封包环境的改动必须考虑 `sys.frozen`、`sys.stdout is None`、CWD 不等于 exe 目录、hiddenimports、datas，以及 `C:\Program Files\Ptu` 普通用户不可写。

@@ -41,6 +41,7 @@ releases/
 
 # ── Python 缓存 ──────────────────────────────
 __pycache__/
+.venv/
 *.pyc
 *.pyo
 *.pyd
