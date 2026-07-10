@@ -26,6 +26,26 @@ def test_webview_start_kwargs_keep_menu_on_windows(monkeypatch):
     assert kwargs["menu"] == menu
 
 
+def test_window_create_kwargs_omit_unknown_coordinates():
+    app = desktop_app.DesktopApp()
+    app.window_state = {"w": 1200, "h": 800, "x": None, "y": None, "maximized": False}
+
+    kwargs = app._window_create_kwargs("http://127.0.0.1:18080/")
+
+    assert "x" not in kwargs
+    assert "y" not in kwargs
+
+
+def test_window_create_kwargs_restore_saved_coordinates():
+    app = desktop_app.DesktopApp()
+    app.window_state = {"w": 1200, "h": 800, "x": 80, "y": 120, "maximized": False}
+
+    kwargs = app._window_create_kwargs("http://127.0.0.1:18080/")
+
+    assert kwargs["x"] == 80
+    assert kwargs["y"] == 120
+
+
 def test_desktop_platform_label_matches_macos(monkeypatch):
     monkeypatch.setattr(desktop_app.sys, "platform", "darwin")
 

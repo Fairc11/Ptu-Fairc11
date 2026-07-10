@@ -164,6 +164,29 @@ class DesktopApp:
             kwargs["menu"] = tray_menu
         return kwargs
 
+    def _window_create_kwargs(self, server_url: str) -> dict:
+        ws = self.window_state
+        kwargs = {
+            "title": "Ptu",
+            "url": server_url,
+            "width": ws.get("w", 1200),
+            "height": ws.get("h", 800),
+            "min_size": (860, 580),
+            "frameless": False,
+            "easy_drag": True,
+            "resizable": True,
+            "fullscreen": False,
+            "maximized": ws.get("maximized", False),
+            "text_select": True,
+            "confirm_close": False,
+            "js_api": self.js_api,
+        }
+        if ws.get("x") is not None:
+            kwargs["x"] = ws["x"]
+        if ws.get("y") is not None:
+            kwargs["y"] = ws["y"]
+        return kwargs
+
     def run(self):
         import webview
         import time as _time
@@ -184,7 +207,6 @@ class DesktopApp:
 
         print(f"[桌面客户端] 服务器就绪 [t={_time.time()-_t0:.2f}s]")
         server_url = f"http://{self.host}:{self.port}/"
-        ws = self.window_state
 
         # 托盘菜单
         def tray_show():
@@ -205,23 +227,7 @@ class DesktopApp:
         ]
 
         # 创建窗口
-        self.window = webview.create_window(
-            title="Ptu",
-            url=server_url,
-            width=ws.get("w", 1200),
-            height=ws.get("h", 800),
-            x=ws.get("x"),
-            y=ws.get("y"),
-            min_size=(860, 580),
-            frameless=False,
-            easy_drag=True,
-            resizable=True,
-            fullscreen=False,
-            maximized=ws.get("maximized", False),
-            text_select=True,
-            confirm_close=False,
-            js_api=self.js_api,
-        )
+        self.window = webview.create_window(**self._window_create_kwargs(server_url))
 
         if self.js_api:
             self.js_api.set_window(self.window)
