@@ -45,7 +45,7 @@ Mac 版校验：
 
 ```text
 Ptu-v1.5.0-mac-arm64.dmg
-SHA256: ea0786e2132a98b89a1cb183a0ecc72016d1169c4efe2f20e9124863d9092481
+SHA256: 15364f11770c78e65e6a53ce513ebaf6d0aa7bf0fb6cc403e76e5535edc61083
 ```
 
 ## v1.5.0 亮点
@@ -163,6 +163,10 @@ installer.iss                Inno Setup 安装器配置
 - macOS 运行时数据写入用户可写目录，避免安装目录写入问题。
 - Playwright、FFmpeg、FFprobe 检测支持 macOS 路径和无 `.exe` 文件名。
 - `run.py --web` 在 macOS 上进入 Web 调试模式，并使用 `lsof` 清理监听端口。
+
+**修复**
+
+- 修复 macOS 首次启动时窗口坐标为空，导致 Cocoa 桌面窗口崩溃的问题。
 
 **验证**
 
